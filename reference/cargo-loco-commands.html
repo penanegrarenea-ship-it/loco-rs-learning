@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="../assets/style.css">
 </head>
 <body>
-<header class="course">Loco 速学 · 参考 · <a href="../lessons/0001-loco-new.html">第 1 课</a></header>
+<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0001-loco-new.html">第 1 课</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a></header>
 
 <h1>命令速查：<code>loco</code> 与 <code>cargo loco</code></h1>
 <p class="lede">版本：<strong>loco 1.2.0 / loco-rs 1.2.0</strong>（2026-09-22 发布）。下面每条命令都来自真实 <code>--help</code> 输出（2026-10-24，SQLite 项目 <code>admin_api</code>）。用 Postgres 或 <code>--db none</code> 的项目子命令会不同。</p>
@@ -30,7 +30,7 @@
 <tr><td><code>--embedded-assets</code></td><td>静态资源打进二进制，仅 serverside</td></tr>
 <tr><td><code>-p, --path &lt;PATH&gt;</code></td><td>生成到哪个目录，默认 <code>.</code></td></tr>
 <tr><td><code>-a, --allow-in-git-repo</code></td><td>在 git 仓库里生成时跳过确认</td></tr>
-<tr><td><code>--os &lt;OS&gt;</code></td><td><code>windows</code> | <code>linux</code> | <code>macos</code>，默认 <code>linux</code></td></tr>
+<tr><td><code>--os &lt;OS&gt;</code></td><td><code>windows</code> | <code>linux</code> | <code>macos</code>。<code>--help</code> 在 Linux 上显示默认 <code>linux</code>；按 <a href="https://loco.rs/docs/reference/cli/">CLI reference</a> 和源码，<strong>在 Windows 上默认是 <code>windows</code></strong>，会多生成 <code>src\bin\tool.rs</code> 和别名 <code>cargo loco-tool</code>（我用 <code>--os windows</code> 生成核对过）</td></tr>
 <tr><td><code>-l, --log &lt;LOG&gt;</code></td><td>生成器日志级别，默认 <code>ERROR</code></td></tr>
 </table>
 <p>没有 <code>--template</code>。<code>--name --db --bg --assets</code> 全给就完全不提问。我们用的：</p>
@@ -49,17 +49,23 @@
 <tr><td><code>scheduler</code></td><td>跑 / 查看定时任务</td><td><code>-l/--list</code>、<code>-n/--name</code>、<code>-t/--tag</code>、<code>-c/--config</code></td></tr>
 <tr><td><code>generate</code></td><td>代码生成（仅 debug 构建）</td><td><code>model</code> <code>migration</code> <code>scaffold</code> <code>controller</code> <code>task</code> <code>scheduler</code> <code>worker</code> <code>mailer</code> <code>data</code> <code>deployment</code> <code>override</code></td></tr>
 <tr><td><code>doctor</code></td><td>检查配置和依赖</td><td><code>-c/--config</code>；<code>-p/--production</code> 已废弃，用 <code>-e production</code></td></tr>
+<tr><td><code>loco-tool</code>（仅 <code>--os windows</code> 项目）</td><td><code>.cargo\config.toml</code> 里的别名 <code>run --bin tool --</code>，跑第二个二进制 <code>tool</code>，子命令同 <code>cargo loco</code></td><td>CHANGELOG 0.8.1：为 Windows 上“边运行边编译”而加</td></tr>
 <tr><td><code>version</code></td><td>打印应用版本</td><td>实测输出 <code>0.1.0 (dev)</code></td></tr>
 <tr><td><code>watch</code></td><td>改代码自动重启</td><td>需另装 <code>cargo-watch</code>（据文档，未实测）</td></tr>
 </table>
 
-<h3>第 1 课用到的</h3>
-<pre><code>cargo loco start                  # 默认 http://localhost:5150
-PORT=5151 cargo loco start        # 换端口（已实测）
-cargo loco routes                 # 列接口
-curl localhost:5150/_ping         # {"ok":true}
-curl localhost:5150/_health       # {"ok":true}
-curl localhost:5150/_readiness    # {"ok":true}</code></pre>
+<h3>常用（第 1、2 课）</h3>
+<p>Windows 11 PowerShell 写法（我在 Linux 上验证，输出照实）：</p>
+<pre><code>cargo loco start                                  # 默认 http://localhost:5150
+$env:PORT=5151; cargo loco start                  # 换端口（已实测）
+Remove-Item Env:PORT                              # 用完清掉
+cargo loco routes                                 # 列接口（树形）
+cargo loco middleware                             # 列中间件，启用的在上
+curl.exe http://localhost:5150/_ping              # {"ok":true}
+curl.exe http://localhost:5150/_health            # {"ok":true}
+curl.exe http://localhost:5150/_readiness         # {"ok":true}
+Invoke-RestMethod http://localhost:5150/_ping     # ok : True</code></pre>
+<p>在 PowerShell 里写 <code>curl.exe</code> 而不是 <code>curl</code>：Windows PowerShell 5.1 的 <code>curl</code> 是 <code>Invoke-WebRequest</code> 的别名。</p>
 
 <div class="note"><code>cargo loco doctor</code> 在新项目上会报 <code>❌ SeaORM CLI was not found</code>，提示 <code>cargo install sea-orm-cli</code>。第 1 课不需要；官方教程把它列为安装步骤，用到 <code>db entities</code> 时再装。</div>
 

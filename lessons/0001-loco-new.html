@@ -26,6 +26,7 @@
 
 <h2>2. 动手</h2>
 <p>前提：Rust stable ≥ 1.94（Loco 的 MSRV，见 <a href="https://github.com/loco-rs/loco/blob/master/Cargo.toml">Cargo.toml</a>）。我这边是 1.99.1。</p>
+<p>下面的命令都是 <strong>Windows 11 PowerShell</strong> 写法。我在 Linux 上真跑验证，输出片段照实贴（所以路径里是 <code>/</code>，你那边会是 <code>\</code>）。</p>
 
 <span class="label">① 装生成器（约 30 秒）</span>
 <pre><code>cargo install loco
@@ -65,7 +66,8 @@ listening on http://localhost:5150</code></pre>
 <div class="note">首次编译：我这台 8 核机器 <code>cargo build</code> 用了 <strong>55 秒</strong>，编译了 446 个 crate，<code>target/</code> 占 <strong>2.7 GB</strong>。核数少的机器几分钟很正常。之后改代码再启动只要零点几秒到几秒。</div>
 
 <span class="label">④ 另开一个终端，打内置接口</span>
-<pre><code>curl -i localhost:5150/_ping</code></pre>
+<pre><code>curl.exe -i http://localhost:5150/_ping</code></pre>
+<p>一定写 <code>curl.exe</code>：Windows PowerShell 5.1 里 <code>curl</code> 是 <code>Invoke-WebRequest</code> 的别名，参数不一样。</p>
 <pre class="output"><code>HTTP/1.1 200 OK
 content-type: application/json
 x-request-id: 407930b9-fb63-45c9-a3ca-093f11faf943
@@ -73,18 +75,28 @@ x-powered-by: loco.rs
 content-length: 11
 
 {"ok":true}</code></pre>
-<pre><code>curl localhost:5150/_health
-curl localhost:5150/_readiness</code></pre>
+<pre><code>curl.exe http://localhost:5150/_health
+curl.exe http://localhost:5150/_readiness</code></pre>
 <pre class="output"><code>{"ok":true}
 {"ok":true}</code></pre>
+<p>不用 curl 的 PowerShell 写法：</p>
+<pre><code>Invoke-RestMethod http://localhost:5150/_ping
+(Invoke-WebRequest http://localhost:5150/_ping).Content</code></pre>
+<pre class="output"><code>ok : True
+
+{"ok":true}</code></pre>
+<p><code>Invoke-RestMethod</code> 会把 JSON 解析成对象显示（<code>ok : True</code>）；要看原始 JSON 用第二种。</p>
 <p>这三个是 <code>src/app.rs</code> 里 <code>AppRoutes::with_default_routes()</code> 挂上的监控接口，一行代码没写就有。响应头里的 <code>x-request-id</code>、<code>x-powered-by</code> 是默认中间件加的——就是你学过的 axum 中间件，只是 Loco 用配置开关。</p>
 
 <span class="label">⑤ 停服务</span>
-<p>回到跑服务的终端按 <code>Ctrl+C</code>。端口被占用时可以换端口：<code>PORT=5151 cargo loco start</code>（生成的 <code>config/development.yaml</code> 里写了这个用法，我试过可用）。</p>
+<p>回到跑服务的终端按 <code>Ctrl+C</code>。端口被占用时可以换端口（生成的 <code>config/development.yaml</code> 读环境变量 <code>PORT</code>，我试过可用）：</p>
+<pre><code>$env:PORT=5151; cargo loco start
+# 用完清掉，否则这个 PowerShell 窗口里之后都是 5151
+Remove-Item Env:PORT</code></pre>
 
 <div class="note"><strong>文档和实际不一致处（以实际为准）</strong>
 <ul>
-<li>教程 <em>Your First App</em> 结尾说内置接口有 <code>/api</code>，实测 <code>curl localhost:5150/api</code> 返回 <strong>404</strong>。内置的是 <code>/_ping</code>、<code>/_health</code>、<code>/_readiness</code>。</li>
+<li>教程 <em>Your First App</em> 结尾说内置接口有 <code>/api</code>，实测 <code>curl.exe http://localhost:5150/api</code> 返回 <strong>404</strong>。内置的是 <code>/_ping</code>、<code>/_health</code>、<code>/_readiness</code>。</li>
 <li>教程说启动后显示 <code>listening on port 5150</code>，1.2.0 实际显示 <code>listening on http://localhost:5150</code>。</li>
 <li><a href="https://github.com/loco-rs/loco/blob/master/CHANGELOG.md">CHANGELOG</a> 顶部的 <code>Unreleased</code> 段还没发布，看到的改动在 1.2.0 里不一定有。</li>
 </ul></div>
@@ -100,7 +112,8 @@ curl localhost:5150/_readiness</code></pre>
 <tr><td><code>.cargo/</code></td><td><code>cargo loco</code> 别名所在</td></tr>
 <tr><td><code>.github/</code>、<code>.claude/</code>、<code>AGENTS.md</code></td><td>CI 配置，以及给编程助手看的说明</td></tr>
 </table>
-<p>启动后还会多出 <code>target/</code>、<code>Cargo.lock</code> 和 <code>admin_api_development.sqlite</code>。</p>
+<p>启动后还会多出 <code>target\</code>、<code>Cargo.lock</code> 和 <code>admin_api_development.sqlite</code>。看顶层用 <code>Get-ChildItem -Force -Name</code>（<code>-Force</code> 才显示 <code>.cargo</code> 这类点开头的目录）。</p>
+<div class="note"><strong>Windows 上会多一个文件。</strong><code>loco new</code> 的 <code>--os</code> 参数在 Windows 上默认是 <code>windows</code>（<a href="https://loco.rs/docs/reference/cli/">CLI reference</a>），会额外生成 <code>src\bin\tool.rs</code>，并在 <code>Cargo.toml</code> 加一个 <code>tool</code> 二进制、在 <code>.cargo\config.toml</code> 加别名 <code>loco-tool = "run --bin tool --"</code>。我用 <code>--os windows</code> 生成对比过，只差这三处。<a href="https://github.com/loco-rs/loco/blob/master/CHANGELOG.md">CHANGELOG</a>（0.8.1）说这个第二个二进制是为 Windows 上“边运行边编译”准备的。日常仍然用 <code>cargo loco start</code>。</div>
 
 <h2>4. 回忆题</h2>
 <div class="quiz" id="q1">
@@ -118,7 +131,7 @@ document.querySelectorAll('.quiz').forEach(function (quiz) {
       quiz.querySelectorAll('button').forEach(function (x) { x.classList.remove('right', 'wrong'); });
       if (b.dataset.ok === '1') {
         b.classList.add('right');
-        fb.textContent = '对。.cargo/config.toml 里 loco = "run --"，等于 cargo run -- start，跑的是 target/debug/admin_api-cli。';
+        fb.textContent = '对。.cargo/config.toml 里 loco = "run --"，等于 cargo run -- start，跑的是 target\\debug\\admin_api-cli.exe。';
       } else {
         b.classList.add('wrong');
         fb.textContent = '不对。全局的 loco 只负责 new；cargo 本身也没有 loco 子命令。再想想启动日志里 Running 那一行。';
@@ -132,7 +145,7 @@ document.querySelectorAll('.quiz').forEach(function (quiz) {
 <div class="task">
 <ol>
 <li>在你自己的电脑上从 <code>cargo install loco</code> 开始，把第 2 节跑一遍。</li>
-<li>把 <code>curl -i localhost:5150/_ping</code> 的完整输出贴回给我，顺便告诉我首次编译用了多久。</li>
+<li>把 <code>curl.exe -i http://localhost:5150/_ping</code> 的完整输出贴回给我，顺便告诉我首次编译用了多久。</li>
 <li>停掉服务后，在项目目录执行 <code>cargo loco routes</code>，数一数 <code>/api/auth</code> 下有几个接口。</li>
 <li>明天开始下一课前，先不看本课，凭记忆写出那条 <code>loco new</code> 命令（四个参数）。</li>
 </ol>
@@ -144,9 +157,9 @@ document.querySelectorAll('.quiz').forEach(function (quiz) {
 <p>有任何不清楚的，随时直接问我。</p>
 
 <nav class="next">
-<span>← 无</span>
+<a href="../index.html">← 目录</a>
 <a href="../reference/cargo-loco-commands.html">命令速查</a>
-<span>第 2 课：项目目录结构（待写） →</span>
+<a href="0002-structure-app-rs.html">第 2 课：项目结构与 app.rs →</a>
 </nav>
 <footer>核实环境：loco 1.2.0 / loco-rs 1.2.0 / rustc 1.99.1 · 2026-10-24</footer>
 </body>

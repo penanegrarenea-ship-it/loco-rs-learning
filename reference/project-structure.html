@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>项目结构图：admin_api</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a></header>
+
+<h1>项目结构图</h1>
+<p class="lede">依据：真实生成的项目 <code>loco new --name admin_api --db sqlite --bg async --assets none</code>（loco 1.2.0，2026-10-24）。注释来自文件实际内容和官方文档。Windows 路径分隔符是 <code>\</code>。</p>
+
+<pre><code>admin_api\
+├─ Cargo.toml              依赖：loco-rs 1.2、axum 0.8、sea-orm 2.0……；二进制 admin_api-cli
+├─ .cargo\config.toml      别名 loco = "run --"（cargo loco 的来源）；Windows MSVC 目标用 rust-lld 链接
+├─ config\
+│  ├─ development.yaml     端口(PORT,默认5150)、数据库、日志、中间件开关、JWT 密钥
+│  ├─ test.yaml            cargo test 用
+│  └─ production.yaml      生产；密钥全从环境变量读
+├─ migration\              独立 crate：数据库迁移
+│  └─ src\
+│     ├─ lib.rs            Migrator，迁移列表（inject-above 注释别删，生成器靠它插入）
+│     └─ m20220101_000001_users.rs   建 users 表
+├─ src\
+│  ├─ bin\main.rs          cli::main::&lt;App, Migrator&gt;() —— 唯一入口
+│  ├─ bin\tool.rs          【仅 --os windows】第二个二进制，内容同 main.rs
+│  ├─ lib.rs               声明下面各模块
+│  ├─ app.rs               ★ impl Hooks for App：routes / connect_workers / register_tasks / truncate / seed / initializers
+│  ├─ controllers\
+│  │  ├─ mod.rs            pub mod auth;
+│  │  └─ auth.rs           9 个 /api/auth/* handler + pub fn routes()
+│  ├─ models\
+│  │  ├─ _entities\        Sea-ORM 实体，按表结构生成，别手改（users.rs、prelude.rs）
+│  │  └─ users.rs          ★ 业务方法：find_by_email、create_with_password、verify_password、generate_jwt……
+│  ├─ views\auth.rs        JSON 响应结构体 LoginResponse / CurrentResponse（不是 HTML 模板）
+│  ├─ dtos\common.rs       Page&lt;T&gt;（分页信封）、ApiError；带 ts-rs，可导出 TypeScript 类型
+│  ├─ workers\downloader.rs   示例后台任务 DownloadWorker（perform 是 TODO）
+│  ├─ tasks\               cargo loco task 可跑的任务：user_create.rs、user_delete.rs
+│  ├─ mailers\auth.rs      邮件 + auth\{welcome,forgot,magic_link}\ 模板
+│  ├─ initializers\mod.rs  启动时额外接线（空）
+│  ├─ data\mod.rs          静态数据加载器（空）
+│  └─ fixtures\users.yaml  seed 用的种子数据
+├─ tests\
+│  ├─ requests\auth.rs     接口测试（request::&lt;App,_,_&gt;）
+│  ├─ models\users.rs      模型测试
+│  ├─ tasks\  workers\
+│  └─ mod.rs
+├─ examples\playground.rs  cargo playground：拿到 AppContext 随手试代码
+├─ AGENTS.md  .claude\skills\loco\   给编程助手看的说明（也是不错的官方速查）
+├─ .github\workflows\ci.yaml
+└─ （运行后）target\  Cargo.lock  admin_api_development.sqlite</code></pre>
+
+<h2>请求的路线</h2>
+<p><code>config\*.yaml</code>（中间件开关）→ <code>app.rs</code> 的 <code>routes()</code> → <code>controllers\xxx.rs</code> 的 handler → <code>models\xxx.rs</code> 的方法（用 <code>models\_entities</code> 访问数据库）→ 用 <code>views\</code> 或 <code>dtos\</code> 里的结构体 <code>format::json(...)</code> 返回。</p>
+
+<h2>DDD 粗对应（建议，非官方约定）</h2>
+<table>
+<tr><th>目录</th><th>大致对应</th></tr>
+<tr><td><code>controllers\</code></td><td>接口层</td></tr>
+<tr><td><code>models\&lt;name&gt;.rs</code></td><td>领域层（Active Record：同时管持久化）</td></tr>
+<tr><td><code>models\_entities\</code>、<code>migration\</code></td><td>基础设施层</td></tr>
+<tr><td><code>workers\</code>、<code>tasks\</code>、<code>mailers\</code></td><td>应用层 / 基础设施之间</td></tr>
+<tr><td><code>views\</code>、<code>dtos\</code></td><td>接口层的数据传输对象</td></tr>
+</table>
+<p>官方立场：领域逻辑写在 model 上，不加 <code>services/</code>、<code>repositories/</code>（<a href="https://loco.rs/skills/loco/doctrine.md">Loco doctrine</a>）。</p>
+
+<p class="source">出处：生成项目实际文件；<a href="https://loco.rs/docs/tutorials/your-first-app/">Your First App</a>；<a href="https://loco.rs/skills/loco/SKILL.md">Loco SKILL.md（Which file does what）</a>；<a href="https://loco.rs/docs/reference/cli/">CLI reference</a>（<code>--os</code>）。</p>
+</body>
+</html>

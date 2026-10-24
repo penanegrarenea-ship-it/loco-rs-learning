@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>axum → Loco 对照</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a></header>
+
+<h1>axum → Loco 对照</h1>
+<p class="lede">Loco 1.2.0 基于 axum 0.8。每行都对照过 loco-rs 1.2.0 源码或生成项目；出处在表下。</p>
+
+<h2>Router</h2>
+<table>
+<tr><th>axum</th><th>Loco</th></tr>
+<tr><td><code>Router::new().route("/x", get(h))</code></td><td>controller 里 <code>Routes::new().add("/x", get(h))</code>；也有 <code>.get("/x", h)</code>、<code>.post(...)</code> 等写法</td></tr>
+<tr><td><code>Router::nest("/api/auth", ...)</code></td><td><code>Routes::new().prefix("/api/auth")</code>（另有 <code>nest</code>、<code>merge</code>）</td></tr>
+<tr><td>在 <code>main()</code> 里把各模块 Router 合起来</td><td><code>app.rs</code> 的 <code>Hooks::routes</code>：<code>AppRoutes::with_default_routes().add_route(controllers::auth::routes())</code></td></tr>
+<tr><td><code>axum::serve(listener, app)</code></td><td><code>Hooks::serve</code> 默认实现替你做（<code>into_make_service_with_connect_info::&lt;SocketAddr&gt;()</code> + 优雅关闭）</td></tr>
+<tr><td>现成的 axum <code>Router</code> 想原样用</td><td>在 <code>Hooks::after_routes</code> 里返回/合并它（<code>cargo loco routes</code> 就看不到这些路由了）</td></tr>
+</table>
+<p>框架内部最终做的就是：对每条路由 <code>app.route(uri, method)</code>，套中间件，然后 <code>app.with_state(ctx)</code>（<code>src/controller/app_routes.rs</code> 的 <code>to_router</code>）。</p>
+
+<h2>State</h2>
+<table>
+<tr><th>axum</th><th>Loco</th></tr>
+<tr><td>自己定义 <code>#[derive(Clone)] struct AppState</code></td><td>框架定义好的 <code>AppContext</code>（<code>#[derive(Clone, FromRef)]</code>，<code>#[non_exhaustive]</code>）</td></tr>
+<tr><td><code>State(s): State&lt;AppState&gt;</code></td><td><code>State(ctx): State&lt;AppContext&gt;</code></td></tr>
+<tr><td>state 里放连接池、配置……</td><td>8 个字段：<code>environment</code> <code>db</code> <code>queue_provider</code> <code>config</code> <code>mailer</code> <code>storage</code> <code>cache</code> <code>shared_store</code></td></tr>
+<tr><td>加自己的东西到 state</td><td><code>ctx.shared_store</code>（在 <code>Hooks::after_context</code> 里放），handler 用 <code>SharedStore</code> 提取</td></tr>
+</table>
+
+<h2>Extractor 与返回值</h2>
+<table>
+<tr><th>axum</th><th>Loco</th></tr>
+<tr><td><code>Path</code>、<code>Query</code>、<code>Form</code>、<code>State</code>、<code>Multipart</code></td><td>同一批，<code>loco_rs::prelude::*</code> 直接从 axum 重新导出</td></tr>
+<tr><td><code>axum::Json&lt;T&gt;</code></td><td>prelude 里的 <code>Json&lt;T&gt;</code> 是 Loco 包装（<code>via(axum::Json)</code>），解析失败转成 Loco 的 <code>Error</code></td></tr>
+<tr><td>自己写校验</td><td><code>JsonValidate&lt;T&gt;</code>、<code>JsonValidateWithMessage&lt;T&gt;</code>（基于 <code>validator</code>）</td></tr>
+<tr><td>自己写鉴权 extractor</td><td><code>auth::JWT</code>（生成项目的 <code>current</code> handler 第一个参数就是它）</td></tr>
+<tr><td><code>impl IntoResponse</code> / <code>Json(v)</code></td><td>惯例返回 <code>Result&lt;Response&gt;</code>，用 <code>format::json(v)</code>；<code>Result</code> 是 <code>loco_rs::Result</code></td></tr>
+<tr><td><code>#[debug_handler]</code></td><td>prelude 里有，生成代码就在用</td></tr>
+</table>
+
+<h2>中间件</h2>
+<table>
+<tr><th>axum</th><th>Loco</th></tr>
+<tr><td><code>router.layer(TraceLayer::new())</code> 等手动挂</td><td>默认一组中间件，在 <code>config\*.yaml</code> 的 <code>server.middlewares</code> 里开关；<code>cargo loco middleware</code> 查看</td></tr>
+<tr><td>单个路由组 <code>.layer(...)</code></td><td><code>Routes::layer(...)</code>，同样是 tower <code>Layer</code></td></tr>
+<tr><td>全局改中间件栈</td><td>覆盖 <code>Hooks::middlewares</code>（默认 <code>default_middleware_stack(ctx)</code>）</td></tr>
+<tr><td><code>.layer()</code> 后加先执行（洋葱）</td><td>一样是 LIFO，源码注释明确写了</td></tr>
+</table>
+<p>默认启用（实测 <code>cargo loco middleware</code>）：<code>limit_payload</code> <code>catch_panic</code> <code>etag</code> <code>logger</code> <code>request_id</code> <code>fallback</code> <code>powered_by</code>；默认关闭：<code>cors</code> <code>remote_ip</code> <code>compression</code> <code>timeout_request</code> <code>static</code> <code>secure_headers</code>。</p>
+
+<h2>测试</h2>
+<table>
+<tr><th>axum</th><th>Loco</th></tr>
+<tr><td>建 <code>Router</code> + <code>tower::ServiceExt::oneshot</code>，或 <code>axum_test::TestServer</code></td><td><code>request::&lt;App, _, _&gt;(|request, ctx| async move { ... })</code>：框架按 <code>config\test.yaml</code> 启动整个 App，<code>request</code> 就是 <code>axum_test::TestServer</code></td></tr>
+<tr><td>自己准备测试数据库</td><td><code>test.yaml</code> 里配好，测试用 <code>#[serial]</code> 串行跑</td></tr>
+</table>
+<pre><code># 跑生成项目里的一个接口测试（已实测通过，首次编译约 38 秒）
+cargo test --test mod requests::auth::can_get_current_user</code></pre>
+<pre class="output"><code>running 1 test
+test requests::auth::can_get_current_user ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 1.16s</code></pre>
+
+<p class="source">出处：loco-rs 1.2.0 源码 <a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/app.rs"><code>src/app.rs</code></a>、<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/controller/app_routes.rs"><code>src/controller/app_routes.rs</code></a>、<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/controller/routes.rs"><code>src/controller/routes.rs</code></a>、<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/prelude.rs"><code>src/prelude.rs</code></a>、<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/testing/request.rs"><code>src/testing/request.rs</code></a>；<a href="https://loco.rs/docs/explanation/coming-from-axum/">Coming from Axum</a>；生成项目 <code>tests\requests\auth.rs</code>。</p>
+</body>
+</html>

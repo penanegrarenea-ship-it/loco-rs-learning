@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 2 课：项目结构与 src/app.rs</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="course">Loco 速学 · 第 2 课 · Loco 1.2.0 · <a href="../index.html">目录</a> · <a href="../reference/project-structure.html">结构图</a> · <a href="../reference/axum-to-loco.html">axum→Loco</a></header>
+
+<h1>项目结构与 <code>src/app.rs</code></h1>
+<p class="lede">目标：看懂 <code>app.rs</code> 是怎么把路由、后台任务、命令行任务接到框架上的，并能从一条路由找到它的源文件。</p>
+
+<h2>1. <code>app.rs</code> 就是你以前手写的 <code>main()</code></h2>
+<p>写 axum 时，你在 <code>main()</code> 里建 <code>Router</code>、挂 <code>.route()</code>、加 <code>.layer()</code>、最后 <code>.with_state(state)</code> 再 <code>axum::serve</code>。Loco 把这段装配代码拿走了，换成一个 trait：<strong><code>Hooks</code></strong>。你在 <code>src/app.rs</code> 里给 <code>struct App</code> 实现它，框架启动时回调这些方法——这就是 Rails 里“约定优于配置”的做法：你只说“有哪些东西”，框架负责“怎么接起来”。</p>
+<p>生成的 <code>src/bin/main.rs</code> 只有一行实际代码：</p>
+<pre><code>cli::main::&lt;App, Migrator&gt;().await</code></pre>
+<p>它把你的 <code>App</code> 交给 Loco 的命令行，<code>start</code>、<code>routes</code>、<code>db</code> 等子命令都从这里进来。</p>
+
+<h3>路由在哪注册</h3>
+<p>你项目里 <code>src/app.rs</code> 的 <code>routes</code>（真实内容）：</p>
+<pre><code>fn routes(_ctx: &amp;AppContext) -&gt; AppRoutes {
+    AppRoutes::with_default_routes() // controller routes below
+        .add_route(controllers::auth::routes())
+}</code></pre>
+<ul>
+<li><code>with_default_routes()</code> 挂上第 1 课的 <code>/_ping</code>、<code>/_health</code>、<code>/_readiness</code>。</li>
+<li>每个 controller 文件导出一个 <code>pub fn routes() -&gt; Routes</code>，在这里用 <code>.add_route(...)</code> 接进来。<strong>漏了这一行，handler 写得再对也是 404。</strong></li>
+</ul>
+<p>controller 那一侧（<code>src/controllers/auth.rs</code> 第 261 行起）：</p>
+<pre><code>pub fn routes() -&gt; Routes {
+    Routes::new()
+        .prefix("/api/auth")
+        .add("/register", post(register))
+        .add("/login", post(login))
+        .add("/current", get(current))
+        // ……共 9 条
+}</code></pre>
+<p><code>post(login)</code>、<code>get(current)</code> 就是 axum 的 <code>MethodRouter</code>，一模一样。</p>
+
+<h3>和 axum 的对应：框架最后做了什么</h3>
+<p>Loco 1.2.0 源码 <a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/controller/app_routes.rs"><code>src/controller/app_routes.rs</code></a> 的 <code>to_router</code>，去掉日志后就三步：</p>
+<pre><code>for router in self.collect() {
+    app = app.route(&amp;router.uri, router.method);   // 你熟悉的 Router::route
+}
+for mid in middlewares {
+    app = mid.apply(app)?;                           // 你熟悉的 .layer()
+}
+let router = app.with_state(ctx);                    // 你熟悉的 with_state</code></pre>
+<p>这里的 <code>ctx</code> 就是 <strong><code>AppContext</code></strong>——Loco 替你定义好的 State 结构体（<code>#[derive(Clone, FromRef)]</code>，8 个字段：<code>environment</code>、<code>db</code>、<code>queue_provider</code>、<code>config</code>、<code>mailer</code>、<code>storage</code>、<code>cache</code>、<code>shared_store</code>）。所以 handler 里写：</p>
+<pre><code>async fn login(State(ctx): State&lt;AppContext&gt;, Json(params): Json&lt;LoginParams&gt;) -&gt; Result&lt;Response&gt;</code></pre>
+<p>和你在 axum 里写 <code>State(state): State&lt;AppState&gt;</code> 是同一回事，只是结构体不用你自己定义。
+<span class="source">出处：1.2.0 源码 <a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/app.rs"><code>src/app.rs</code></a>；<a href="https://loco.rs/docs/explanation/coming-from-axum/">Coming from Axum</a></span></p>
+
+<h3><code>Hooks</code> 里的其他方法</h3>
+<p>依据 1.2.0 源码。“必须”= 没有默认实现，不写编译不过。</p>
+<table>
+<tr><th>方法</th><th>必须？</th><th>你项目里做了什么</th></tr>
+<tr><td><code>app_name</code></td><td>必须</td><td>返回 crate 名</td></tr>
+<tr><td><code>boot</code></td><td>必须</td><td><code>create_app::&lt;Self, Migrator&gt;(...)</code>，带上数据库迁移</td></tr>
+<tr><td><code>routes</code></td><td>必须</td><td>注册路由（上面讲的）</td></tr>
+<tr><td><code>connect_workers</code></td><td>必须</td><td>注册后台任务 <code>DownloadWorker</code>（示例，<code>perform</code> 里是 TODO）</td></tr>
+<tr><td><code>register_tasks</code></td><td>必须</td><td>注册 <code>cargo loco task</code> 能跑的任务：<code>UserCreate</code>、<code>UserDelete</code></td></tr>
+<tr><td><code>truncate</code> / <code>seed</code></td><td>必须（仅有数据库时）</td><td>清空 <code>users</code> 表 / 从 <code>src/fixtures/users.yaml</code> 灌数据</td></tr>
+<tr><td><code>initializers</code></td><td>可选</td><td>生成的代码显式写了，返回空 <code>vec![]</code></td></tr>
+<tr><td><code>app_version</code></td><td>可选</td><td>拼 <code>0.1.0 (dev)</code></td></tr>
+<tr><td><code>middlewares</code>、<code>before_routes</code>、<code>after_routes</code>、<code>after_context</code>、<code>serve</code>、<code>on_shutdown</code> 等</td><td>可选</td><td>没写，用默认。<code>after_routes</code> 可以直接返回一个现成的 axum <code>Router</code></td></tr>
+</table>
+<p class="source">全表见 <a href="https://loco.rs/docs/reference/hooks/">Hooks trait 参考</a>。</p>
+
+<h2>2. 各目录放什么</h2>
+<p>Windows 上 <code>loco new</code> 默认 <code>--os windows</code>，会多一个 <code>src\bin\tool.rs</code>（见第 1 课）。完整的带注释结构图在 <a href="../reference/project-structure.html">reference/project-structure.html</a>。和后台 API 最相关的：</p>
+<table>
+<tr><th>目录</th><th>放什么</th></tr>
+<tr><td><code>src/controllers/</code></td><td>handler + 每个文件一个 <code>routes()</code>。应该保持薄：解析参数 → 调 model → 返回</td></tr>
+<tr><td><code>src/models/_entities/</code></td><td>Sea-ORM 根据表结构<strong>生成</strong>的实体，别手改</td></tr>
+<tr><td><code>src/models/users.rs</code></td><td>你的业务方法：<code>find_by_email</code>、<code>create_with_password</code>、<code>verify_password</code>……</td></tr>
+<tr><td><code>src/views/</code></td><td><strong>注意：</strong>这个项目没有页面，这里放的是 JSON 响应结构体（<code>LoginResponse</code>、<code>CurrentResponse</code>），不是 HTML 模板</td></tr>
+<tr><td><code>src/dtos/</code></td><td>线上传输类型：现在只有 <code>common.rs</code>（分页 <code>Page&lt;T&gt;</code>、<code>ApiError</code>）。按官方教程，以后 scaffold 生成的请求/响应类型放这里</td></tr>
+<tr><td><code>src/workers/</code></td><td>后台任务（<code>BackgroundWorker</code>），请求里用 <code>perform_later</code> 丢进去</td></tr>
+<tr><td><code>src/tasks/</code></td><td>命令行一次性任务，<code>cargo loco task &lt;名字&gt;</code> 运行</td></tr>
+<tr><td><code>src/mailers/</code></td><td>邮件（注册欢迎信、找回密码）</td></tr>
+<tr><td><code>src/initializers/</code></td><td>启动时额外接线（现在是空的）</td></tr>
+<tr><td><code>migration/src/</code></td><td>建表/改表，每次变更一个文件</td></tr>
+<tr><td><code>config/</code></td><td><code>development</code> / <code>test</code> / <code>production</code> 三套 YAML，端口、数据库、中间件开关都在这</td></tr>
+</table>
+
+<h3>DDD 视角（只点到）</h3>
+<p><strong>官方立场：</strong>Loco 走 Rails 的 Active Record 路线——“胖 model、瘦 controller”，领域逻辑写在 model 上；明确说<em>不要</em>加 <code>services/</code>、<code>repositories/</code> 目录，“model 就是领域对象，它自己知道怎么持久化”。
+<span class="source">出处：<a href="https://loco.rs/skills/loco/doctrine.md">Loco doctrine</a>（官网发布，也随项目生成在 <code>.claude/skills/loco/doctrine.md</code>）</span></p>
+<p><strong>以下是我的建议，不是官方约定：</strong>粗略对应的话，<code>controllers/</code> ≈ 接口层，<code>models/&lt;name&gt;.rs</code> ≈ 领域层（但和持久化绑在一起），<code>models/_entities/</code> 和 <code>migration/</code> ≈ 基础设施层，<code>workers/</code>、<code>tasks/</code>、<code>mailers/</code> 介于应用层和基础设施之间。领域逻辑先按官方放进 <code>models/&lt;name&gt;.rs</code>；等后台管理的规则多到 model 装不下时，再讨论要不要拆出纯领域模块——那是和框架约定的取舍，后面单独讲。</p>
+
+<h2>3. 动手（在 <code>playground\admin_api</code> 里真跑过）</h2>
+<p>命令是 Windows 11 PowerShell 写法，在项目根目录（<code>admin_api\</code>）执行。我在 Linux 版 PowerShell 7 上跑的，输出照实贴，所以路径显示为 <code>src/app.rs</code>；你那边会是 <code>src\app.rs</code>。</p>
+
+<span class="label">① 看 app.rs 注册了哪些路由</span>
+<pre><code>Select-String -Path src\app.rs -Pattern 'add_route|with_default_routes'</code></pre>
+<pre class="output"><code>src/app.rs:49:        AppRoutes::with_default_routes() // controller routes below
+src/app.rs:50:            .add_route(controllers::auth::routes())</code></pre>
+
+<span class="label">② 列出所有路由</span>
+<pre><code>cargo loco routes</code></pre>
+<pre class="output"><code>/_health GET                                       /_health
+/_ping GET                                         /_ping
+/_readiness GET                                    /_readiness
+/api
+   └─ /auth
+      ├─ /current GET                              /api/auth/current
+      ├─ /forgot POST                              /api/auth/forgot
+      ├─ /login POST                               /api/auth/login
+      ├─ /magic-link
+      │  ├─ POST                                   /api/auth/magic-link
+      │  └─ /{token} GET                           /api/auth/magic-link/{token}
+      ├─ /register POST                            /api/auth/register
+      ├─ /resend-verification-mail POST            /api/auth/resend-verification-mail
+      ├─ /reset POST                               /api/auth/reset
+      └─ /verify/{token} GET                       /api/auth/verify/{token}</code></pre>
+<p>左边是按前缀折叠的树，右边是完整路径。3 个内置 + 9 个 auth = 12 条。</p>
+
+<span class="label">③ 从路由找到源码：<code>GET /api/auth/current</code></span>
+<pre><code>Select-String -Path src\controllers\*.rs -Pattern '"/current"'
+Select-String -Path src\controllers\auth.rs -Pattern 'async fn current'</code></pre>
+<pre class="output"><code>src/controllers/auth.rs:269:        .add("/current", get(current))
+src/controllers/auth.rs:162:async fn current(auth: auth::JWT, State(ctx): State&lt;AppContext&gt;) -&gt; Result&lt;Response&gt; {</code></pre>
+<p>注意第一个参数 <code>auth: auth::JWT</code>——它是个 extractor，请求没带合法 token 就进不了这个函数。这就是你学过的 axum extractor，第 3 课细讲。</p>
+
+<span class="label">④ 看默认中间件（和你学过的 .layer() 对应）</span>
+<pre><code>cargo loco middleware</code></pre>
+<pre class="output"><code>limit_payload
+catch_panic
+etag
+logger
+request_id
+fallback
+powered_by
+
+
+cors                   (disabled)
+remote_ip              (disabled)
+compression            (disabled)
+timeout_request        (disabled)
+static                 (disabled)
+secure_headers         (disabled)</code></pre>
+<p>上面一组启用，下面一组关闭，开关在 <code>config/*.yaml</code> 的 <code>server.middlewares</code> 里。第 1 课看到的 <code>x-request-id</code>、<code>x-powered-by</code> 响应头就来自 <code>request_id</code> 和 <code>powered_by</code>。</p>
+
+<div class="note"><strong>文档和实际不一致处（以 1.2.0 实际为准）</strong>
+<ul>
+<li><a href="https://loco.rs/docs/how-to/add-controller/">Add a controller</a> 里 <code>cargo loco routes</code> 的示例输出是扁平的 <code>[GET] /_ping</code> 列表；1.2.0 实际输出是上面那种树形。</li>
+<li><a href="https://loco.rs/docs/reference/hooks/">Hooks 参考</a>标的源码行号（<code>src/app.rs:281-443</code>）已过时，1.2.0 里 <code>trait Hooks</code> 在第 422 行起。另外那页说 <code>impl Hooks for App</code> 是 <code>cargo loco generate</code> 生成的，实际是 <code>loco new</code> 建项目时生成的。</li>
+<li>官方给编程助手看的 <a href="https://loco.rs/skills/loco/SKILL.md">SKILL.md</a> 说 <code>views/</code> 放响应 DTO；但项目里同时还有 <code>dtos/</code>。现状是：auth 的响应在 <code>views/</code>，分页和错误类型在 <code>dtos/</code>。</li>
+</ul></div>
+
+<h2>4. 回忆题</h2>
+<div class="quiz" id="q1">
+<p class="q">你新写了 <code>src/controllers/admins.rs</code>，编译通过，但 <code>cargo loco routes</code> 里没有它。最可能漏了什么？</p>
+<button data-ok="0">config 里漏了 routes 段</button>
+<button data-ok="1">app.rs 里漏了 add_route</button>
+<button data-ok="0">Cargo.toml 里漏了 feature</button>
+<p class="fb" aria-live="polite"></p>
+</div>
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  var fb = quiz.querySelector('.fb');
+  quiz.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      quiz.querySelectorAll('button').forEach(function (x) { x.classList.remove('right', 'wrong'); });
+      if (b.dataset.ok === '1') {
+        b.classList.add('right');
+        fb.textContent = '对。路由只从 Hooks::routes 收集：要在 app.rs 里 .add_route(controllers::admins::routes())。用 cargo loco generate controller 会自动加上。';
+      } else {
+        b.classList.add('wrong');
+        fb.textContent = '不对。YAML 里没有登记路由的地方，路由也不靠 feature 开关。想想 app.rs 的 routes() 里那条链。';
+      }
+    });
+  });
+});
+</script>
+
+<h2>5. 练习</h2>
+<div class="task">
+<ol>
+<li>在你的 <code>admin_api</code> 里跑一遍第 3 节的 ①②③，确认输出和我的一样。</li>
+<li>用同样的 <code>Select-String</code> 方法找出 <code>POST /api/auth/login</code> 的路由在哪个文件第几行、handler 在第几行，把两条结果贴回来。</li>
+<li>看 <code>login</code> 的参数列表，说出哪个参数相当于你在 axum 里写的 <code>State</code>，哪个是请求体。</li>
+<li>间隔复习（不看第 1 课）：<code>cargo loco</code> 实际运行的是什么？</li>
+</ol>
+</div>
+
+<h2>主要阅读</h2>
+<p><a href="https://loco.rs/docs/explanation/coming-from-axum/">Coming from Axum</a>——整页，正好对上你的 axum 基础。想查 <code>Hooks</code> 全部方法时看 <a href="https://loco.rs/docs/reference/hooks/">Hooks trait 参考</a>。</p>
+
+<p>有任何不清楚的，随时直接问我。</p>
+
+<nav class="next">
+<a href="0001-loco-new.html">← 第 1 课：起一个 Loco 项目</a>
+<a href="../reference/cargo-loco-commands.html">命令速查</a>
+<span>第 3 课：路由和 controller（待写） →</span>
+</nav>
+<footer>核实环境：loco 1.2.0 / loco-rs 1.2.0 / rustc 1.99.1 · 2026-10-25</footer>
+</body>
+</html>
