@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 1 课：起一个 Loco 项目并跑起来</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="course">Loco 速学 · 第 1 课 · Loco 1.2.0 · <a href="../reference/cargo-loco-commands.html">命令速查</a></header>
+
+<h1>起一个 Loco 项目并跑起来</h1>
+<p class="lede">目标：一条命令生成项目，一条命令启动，用 curl 拿到 <code>{"ok":true}</code>。</p>
+
+<h2>1. 先知道两件事</h2>
+<p><strong>Loco 就是 axum，加上一层预先做好的决定。</strong>路由、提取器、中间件都是你学过的 axum 0.8 那一套；Loco 替你把 <code>main()</code>、共享状态（<code>AppContext</code>，相当于你自己写的 <code>State</code> 结构体）、配置、日志、数据库都接好了。Rails 的核心思路叫“约定优于配置”：文件放在约定的位置、用生成器生成，框架就知道怎么接线，你不用手写装配代码。
+<span class="source">出处：<a href="https://loco.rs/docs/explanation/coming-from-axum/">Coming from Axum</a></span></p>
+
+<p><strong>有两个命令行，别搞混。</strong></p>
+<table>
+<tr><th>命令</th><th>是什么</th><th>什么时候用</th></tr>
+<tr><td><code>loco</code></td><td>独立的项目生成器，<code>cargo install loco</code> 装一次</td><td>只用来 <code>loco new</code> 建新项目</td></tr>
+<tr><td><code>cargo loco</code></td><td>不是真的 cargo 子命令，是生成项目里 <code>.cargo/config.toml</code> 的别名 <code>loco = "run --"</code>，实际运行你项目自己的二进制</td><td>启动、迁移、生成代码……项目里的一切日常操作</td></tr>
+</table>
+<p class="source">出处：<a href="https://loco.rs/docs/reference/cli/">CLI reference</a>、<a href="https://loco.rs/docs/tutorials/your-first-app/">Your First App</a>；别名已在生成的项目里核对。</p>
+
+<h2>2. 动手</h2>
+<p>前提：Rust stable ≥ 1.94（Loco 的 MSRV，见 <a href="https://github.com/loco-rs/loco/blob/master/Cargo.toml">Cargo.toml</a>）。我这边是 1.99.1。</p>
+
+<span class="label">① 装生成器（约 30 秒）</span>
+<pre><code>cargo install loco
+loco --version</code></pre>
+<pre class="output"><code>   Installed package `loco v1.2.0` (executable `loco`)
+loco 1.2.0</code></pre>
+
+<span class="label">② 生成项目（不到 1 秒）</span>
+<pre><code>loco new --name admin_api --db sqlite --bg async --assets none</code></pre>
+<pre class="output"><code>🚂 Loco app generated successfully in:
+/workspace/teaching/loco-rs/playground/admin_api</code></pre>
+<p>四个参数都给了，向导就不再提问，结果可复现：</p>
+<ul>
+<li><code>--db sqlite</code>：数据库是本地一个文件，不用装 Postgres。选了数据库，项目自带一整套用户注册/登录接口（<code>/api/auth/*</code>），后台管理正好要用。</li>
+<li><code>--bg async</code>：后台任务在同一进程里用 tokio 跑，不需要 Redis。</li>
+<li><code>--assets none</code>：不生成页面，纯 JSON API。</li>
+</ul>
+<p>为什么不是“选个 REST API 模板”：交互菜单里确实有 “Rest API (with DB and user auth)”，但命令行<strong>没有</strong> <code>--template</code> 参数；上面这组参数的效果就是带数据库和用户鉴权的 REST API。<span class="source">出处：<a href="https://loco.rs/docs/reference/cli/">CLI reference §1.2–1.4</a></span></p>
+
+<span class="label">③ 启动（第一次要编译，耐心等）</span>
+<pre><code>cd admin_api
+cargo loco start</code></pre>
+<pre class="output"><code>    Finished `dev` profile [unoptimized + debuginfo] target(s) ...
+     Running `target/debug/admin_api-cli start`
+ INFO loco_rs::db::migrate: auto migrating
+ INFO sea_orm_migration::migrator::exec: Migration 'm20220101_000001_users' has been applied
+ INFO loco_rs::controller::app_routes: [GET] /_ping
+ ...
+environment: development
+   database: automigrate
+     logger: debug
+compilation: debug
+      modes: server
+
+listening on http://localhost:5150</code></pre>
+<p>注意 <code>Running `target/debug/admin_api-cli start`</code>——这就证明了 <code>cargo loco</code> 只是在跑你自己的程序。启动时它还自动执行了数据库迁移，建出了 <code>users</code> 表和 <code>admin_api_development.sqlite</code> 文件。</p>
+<div class="note">首次编译：我这台 8 核机器 <code>cargo build</code> 用了 <strong>55 秒</strong>，编译了 446 个 crate，<code>target/</code> 占 <strong>2.7 GB</strong>。核数少的机器几分钟很正常。之后改代码再启动只要零点几秒到几秒。</div>
+
+<span class="label">④ 另开一个终端，打内置接口</span>
+<pre><code>curl -i localhost:5150/_ping</code></pre>
+<pre class="output"><code>HTTP/1.1 200 OK
+content-type: application/json
+x-request-id: 407930b9-fb63-45c9-a3ca-093f11faf943
+x-powered-by: loco.rs
+content-length: 11
+
+{"ok":true}</code></pre>
+<pre><code>curl localhost:5150/_health
+curl localhost:5150/_readiness</code></pre>
+<pre class="output"><code>{"ok":true}
+{"ok":true}</code></pre>
+<p>这三个是 <code>src/app.rs</code> 里 <code>AppRoutes::with_default_routes()</code> 挂上的监控接口，一行代码没写就有。响应头里的 <code>x-request-id</code>、<code>x-powered-by</code> 是默认中间件加的——就是你学过的 axum 中间件，只是 Loco 用配置开关。</p>
+
+<span class="label">⑤ 停服务</span>
+<p>回到跑服务的终端按 <code>Ctrl+C</code>。端口被占用时可以换端口：<code>PORT=5151 cargo loco start</code>（生成的 <code>config/development.yaml</code> 里写了这个用法，我试过可用）。</p>
+
+<div class="note"><strong>文档和实际不一致处（以实际为准）</strong>
+<ul>
+<li>教程 <em>Your First App</em> 结尾说内置接口有 <code>/api</code>，实测 <code>curl localhost:5150/api</code> 返回 <strong>404</strong>。内置的是 <code>/_ping</code>、<code>/_health</code>、<code>/_readiness</code>。</li>
+<li>教程说启动后显示 <code>listening on port 5150</code>，1.2.0 实际显示 <code>listening on http://localhost:5150</code>。</li>
+<li><a href="https://github.com/loco-rs/loco/blob/master/CHANGELOG.md">CHANGELOG</a> 顶部的 <code>Unreleased</code> 段还没发布，看到的改动在 1.2.0 里不一定有。</li>
+</ul></div>
+
+<h2>3. 生成了什么（只点名，下一课展开）</h2>
+<table>
+<tr><th>顶层</th><th>一句话</th></tr>
+<tr><td><code>src/</code></td><td>你的代码：<code>app.rs</code>、<code>controllers/</code>、<code>models/</code>、<code>dtos/</code> 等</td></tr>
+<tr><td><code>config/</code></td><td>各环境的 YAML 配置</td></tr>
+<tr><td><code>migration/</code></td><td>数据库迁移（独立的 crate）</td></tr>
+<tr><td><code>tests/</code></td><td>请求测试、模型测试</td></tr>
+<tr><td><code>examples/</code></td><td>playground 小程序</td></tr>
+<tr><td><code>.cargo/</code></td><td><code>cargo loco</code> 别名所在</td></tr>
+<tr><td><code>.github/</code>、<code>.claude/</code>、<code>AGENTS.md</code></td><td>CI 配置，以及给编程助手看的说明</td></tr>
+</table>
+<p>启动后还会多出 <code>target/</code>、<code>Cargo.lock</code> 和 <code>admin_api_development.sqlite</code>。</p>
+
+<h2>4. 回忆题</h2>
+<div class="quiz" id="q1">
+<p class="q">不看上文：执行 <code>cargo loco start</code> 时，真正在运行的是什么？</p>
+<button data-ok="0">全局安装的那个生成器命令</button>
+<button data-ok="1">你项目里自己的那个二进制</button>
+<button data-ok="0">构建工具自带的官方子命令</button>
+<p class="fb" aria-live="polite"></p>
+</div>
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  var fb = quiz.querySelector('.fb');
+  quiz.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      quiz.querySelectorAll('button').forEach(function (x) { x.classList.remove('right', 'wrong'); });
+      if (b.dataset.ok === '1') {
+        b.classList.add('right');
+        fb.textContent = '对。.cargo/config.toml 里 loco = "run --"，等于 cargo run -- start，跑的是 target/debug/admin_api-cli。';
+      } else {
+        b.classList.add('wrong');
+        fb.textContent = '不对。全局的 loco 只负责 new；cargo 本身也没有 loco 子命令。再想想启动日志里 Running 那一行。';
+      }
+    });
+  });
+});
+</script>
+
+<h2>5. 练习</h2>
+<div class="task">
+<ol>
+<li>在你自己的电脑上从 <code>cargo install loco</code> 开始，把第 2 节跑一遍。</li>
+<li>把 <code>curl -i localhost:5150/_ping</code> 的完整输出贴回给我，顺便告诉我首次编译用了多久。</li>
+<li>停掉服务后，在项目目录执行 <code>cargo loco routes</code>，数一数 <code>/api/auth</code> 下有几个接口。</li>
+<li>明天开始下一课前，先不看本课，凭记忆写出那条 <code>loco new</code> 命令（四个参数）。</li>
+</ol>
+</div>
+
+<h2>主要阅读</h2>
+<p><a href="https://loco.rs/docs/tutorials/your-first-app/">Your First App</a>——读到 “3. Start the server” 为止，第 4 节 scaffold 以后再看。</p>
+
+<p>有任何不清楚的，随时直接问我。</p>
+
+<nav class="next">
+<span>← 无</span>
+<a href="../reference/cargo-loco-commands.html">命令速查</a>
+<span>第 2 课：项目目录结构（待写） →</span>
+</nav>
+<footer>核实环境：loco 1.2.0 / loco-rs 1.2.0 / rustc 1.99.1 · 2026-10-24</footer>
+</body>
+</html>

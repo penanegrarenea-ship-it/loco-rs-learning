@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>命令速查：loco 与 cargo loco</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="course">Loco 速学 · 参考 · <a href="../lessons/0001-loco-new.html">第 1 课</a></header>
+
+<h1>命令速查：<code>loco</code> 与 <code>cargo loco</code></h1>
+<p class="lede">版本：<strong>loco 1.2.0 / loco-rs 1.2.0</strong>（2026-09-22 发布）。下面每条命令都来自真实 <code>--help</code> 输出（2026-10-24，SQLite 项目 <code>admin_api</code>）。用 Postgres 或 <code>--db none</code> 的项目子命令会不同。</p>
+
+<h2>安装与生成器 <code>loco</code></h2>
+<table>
+<tr><th>命令</th><th>作用</th></tr>
+<tr><td><code>cargo install loco</code></td><td>装生成器（包名就叫 <code>loco</code>）</td></tr>
+<tr><td><code>loco --version</code></td><td>看版本 → <code>loco 1.2.0</code></td></tr>
+<tr><td><code>loco new [OPTIONS]</code></td><td>生成新项目；<code>loco</code> 只有这一个子命令</td></tr>
+</table>
+
+<h3><code>loco new</code> 参数</h3>
+<table>
+<tr><th>参数</th><th>可选值 / 默认</th></tr>
+<tr><td><code>-n, --name &lt;NAME&gt;</code></td><td>项目名；不给就提问</td></tr>
+<tr><td><code>--db &lt;DB&gt;</code></td><td><code>sqlite</code> | <code>postgres</code> | <code>none</code></td></tr>
+<tr><td><code>--bg &lt;BG&gt;</code></td><td><code>async</code> | <code>queue-redis</code> | <code>queue-postgres</code> | <code>queue-sqlite</code> | <code>blocking</code></td></tr>
+<tr><td><code>--assets &lt;ASSETS&gt;</code></td><td><code>serverside</code> | <code>clientside</code> | <code>none</code></td></tr>
+<tr><td><code>--embedded-assets</code></td><td>静态资源打进二进制，仅 serverside</td></tr>
+<tr><td><code>-p, --path &lt;PATH&gt;</code></td><td>生成到哪个目录，默认 <code>.</code></td></tr>
+<tr><td><code>-a, --allow-in-git-repo</code></td><td>在 git 仓库里生成时跳过确认</td></tr>
+<tr><td><code>--os &lt;OS&gt;</code></td><td><code>windows</code> | <code>linux</code> | <code>macos</code>，默认 <code>linux</code></td></tr>
+<tr><td><code>-l, --log &lt;LOG&gt;</code></td><td>生成器日志级别，默认 <code>ERROR</code></td></tr>
+</table>
+<p>没有 <code>--template</code>。<code>--name --db --bg --assets</code> 全给就完全不提问。我们用的：</p>
+<pre><code>loco new --name admin_api --db sqlite --bg async --assets none</code></pre>
+
+<h2>项目里的 <code>cargo loco</code></h2>
+<p><code>cargo loco</code> = <code>.cargo/config.toml</code> 里的别名 <code>loco = "run --"</code>，跑的是项目自己的 <code>&lt;项目名&gt;-cli</code>。所有子命令都接受 <code>-e, --environment &lt;ENV&gt;</code>（默认 <code>development</code>）。</p>
+<table>
+<tr><th>子命令</th><th>作用</th><th>常用参数（已核实）</th></tr>
+<tr><td><code>start</code></td><td>启动应用</td><td><code>-p/--port</code>、<code>-b/--binding</code>、<code>-n/--no-banner</code>、<code>-w/--worker</code>、<code>-s/--server-and-worker</code>、<code>-a/--all</code>、<code>--scheduler</code></td></tr>
+<tr><td><code>db</code></td><td>数据库操作</td><td><code>create</code> <code>migrate</code> <code>down [N]</code> <code>reset</code> <code>status</code> <code>entities</code> <code>truncate</code> <code>seed</code> <code>schema</code></td></tr>
+<tr><td><code>routes</code></td><td>以树形列出全部接口</td><td>—</td></tr>
+<tr><td><code>middleware</code></td><td>列出中间件</td><td><code>-c/--config</code> 同时打印配置</td></tr>
+<tr><td><code>task</code></td><td>跑自定义任务</td><td><code>[NAME] [key:val]...</code></td></tr>
+<tr><td><code>jobs</code></td><td>管理任务队列</td><td><code>cancel</code> <code>tidy</code> <code>purge</code> <code>dump</code> <code>import</code> <code>retry</code> <code>requeue</code></td></tr>
+<tr><td><code>scheduler</code></td><td>跑 / 查看定时任务</td><td><code>-l/--list</code>、<code>-n/--name</code>、<code>-t/--tag</code>、<code>-c/--config</code></td></tr>
+<tr><td><code>generate</code></td><td>代码生成（仅 debug 构建）</td><td><code>model</code> <code>migration</code> <code>scaffold</code> <code>controller</code> <code>task</code> <code>scheduler</code> <code>worker</code> <code>mailer</code> <code>data</code> <code>deployment</code> <code>override</code></td></tr>
+<tr><td><code>doctor</code></td><td>检查配置和依赖</td><td><code>-c/--config</code>；<code>-p/--production</code> 已废弃，用 <code>-e production</code></td></tr>
+<tr><td><code>version</code></td><td>打印应用版本</td><td>实测输出 <code>0.1.0 (dev)</code></td></tr>
+<tr><td><code>watch</code></td><td>改代码自动重启</td><td>需另装 <code>cargo-watch</code>（据文档，未实测）</td></tr>
+</table>
+
+<h3>第 1 课用到的</h3>
+<pre><code>cargo loco start                  # 默认 http://localhost:5150
+PORT=5151 cargo loco start        # 换端口（已实测）
+cargo loco routes                 # 列接口
+curl localhost:5150/_ping         # {"ok":true}
+curl localhost:5150/_health       # {"ok":true}
+curl localhost:5150/_readiness    # {"ok":true}</code></pre>
+
+<div class="note"><code>cargo loco doctor</code> 在新项目上会报 <code>❌ SeaORM CLI was not found</code>，提示 <code>cargo install sea-orm-cli</code>。第 1 课不需要；官方教程把它列为安装步骤，用到 <code>db entities</code> 时再装。</div>
+
+<p class="source">出处：<a href="https://loco.rs/docs/reference/cli/">CLI reference</a>、<a href="https://github.com/loco-rs/loco">github.com/loco-rs/loco</a>（<code>src/cli.rs</code>、<code>loco-new/</code>）。注意：文档 CLI reference 写生成项目的 <code>loco-rs</code> 版本要求“currently 1.1”，源码 <code>loco-new/src/lib.rs</code> 已是 <code>"1.2"</code>，生成的 <code>Cargo.toml</code> 实际为 <code>loco-rs = { version = "1.2" }</code>。</p>
+
+<footer>有疑问随时问。</footer>
+</body>
+</html>
