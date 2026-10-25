@@ -162,7 +162,10 @@ Migration 'm20261025_123659_products'... Applied</code></pre>
 <tr><td><code>db status</code></td><td>列出每个 migration 是 Applied 还是 Pending</td></tr>
 <tr><td><code>db down</code></td><td>执行最近 1 个的 <code>down</code>（<code>db down 2</code> 回滚 2 个；帮助：<code>[STEPS] … [default: 1]</code>）</td></tr>
 <tr><td><code>db entities</code></td><td>按<em>当前数据库</em>重写 <code>_entities\</code>（需 sea-orm-cli）</td></tr>
+<tr><td><code>db reset</code></td><td>删掉所有表，再重跑全部 migration；数据清空，<strong>不</strong> seed</td></tr>
+<tr><td><code>db truncate</code></td><td>调 <code>app.rs</code> 的 <code>Hooks::truncate</code>，只清你在里面列出的表，不删表</td></tr>
 </table>
+<p>没有 <code>db up</code> / <code>db fresh</code>（实测 <code>error: unrecognized subcommand 'up'</code>），往前走就是 <code>db migrate</code>。</p>
 <p><code>down</code> 会删表，表里的数据一起没了。以后手写 <code>generate migration</code> 改表时，顺序是 <code>db migrate</code> 再 <code>db entities</code>——entity 是从数据库读出来的，顺序反了就生成旧结构。</p>
 
 <span class="label">⑥ 放点数据：fixture + seed</span>
@@ -194,8 +197,11 @@ Migration 'm20261025_123659_products'... Applied</code></pre>
 async fn seed(ctx: &amp;AppContext, base: &amp;Path) -&gt; Result&lt;()&gt; {
     db::seed::&lt;users::ActiveModel&gt;(&amp;ctx.db, &amp;base.join("users.yaml").display().to_string())
         .await?;
-    db::seed::&lt;products::ActiveModel&gt;(&amp;ctx.db, &amp;base.join("products.yaml").display().to_string())
-        .await?;                                          // 新增
+    db::seed::&lt;products::ActiveModel&gt;(               // 新增
+        &amp;ctx.db,
+        &amp;base.join("products.yaml").display().to_string(),
+    )
+    .await?;
     Ok(())
 }</code></pre>
 <pre><code>cargo loco db seed --reset</code></pre>
@@ -260,7 +266,9 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; fin
 <ul>
 <li><code>generate model</code> 成功后打印 “You can now apply it with <code>cargo loco db migrate &amp;&amp; cargo loco db entities</code>”，但两步其实已经跑完（<code>db status</code> 显示 Applied）。<a href="https://loco.rs/docs/tutorials/your-first-app/">Your First App</a> 也写明 model/scaffold “already applied the migration”。这句提示是多余的。</li>
 <li><a href="https://loco.rs/docs/how-to/add-model/">Add a model</a> 没提 <code>db entities</code> 依赖外部的 <code>sea-orm-cli</code>，也没提缺它时会停在一半；只有 Your First App 和 Add a database 页写了要装。</li>
-<li>文档没提生成器会对整个项目跑 <code>cargo fmt</code>，也没提会重写 <code>_entities\users.rs</code> 等已有 entity。</li>
+<li>文档没提生成器会对整个项目跑 <code>cargo fmt</code>，也没提会重写 <code>_entities\users.rs</code> 等已有 entity。（<code>generate migration</code> 也会跑 fmt：它把上面 <code>app.rs</code> 里我那行过长的 seed 调用拆成了多行。）</li>
+<li><a href="https://loco.rs/docs/how-to/seed-data/">Seed data</a> 说每行通过 <code>A::from_json</code> 转换；1.2.0 <a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/db/seed.rs#L56-L77"><code>src/db/seed.rs</code> 第 56–77 行</a>实际是直接反序列化成 <code>Model</code>（注释说绕开 sea-orm 2.0 的问题），所以 NOT NULL 列（含 <code>created_at</code>）缺了就报 <code>missing field</code>。</li>
+<li><code>db seed --reset</code> 的帮助写 “Clears all data”，实际是 <code>db::reset</code> = 删表重建再跑全部 migration（<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/boot.rs#L366-L369"><code>src/boot.rs</code> 第 366–369 行</a>），不是 truncate。</li>
 </ul></div>
 
 <h2>3. 回忆题</h2>

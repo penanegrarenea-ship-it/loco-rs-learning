@@ -28,3 +28,4 @@
 - 教练机已装 sea-orm-cli 2.0.4（`--no-default-features --features codegen,sqlx-sqlite,sqlx-postgres,runtime-tokio-rustls`，因缺 OpenSSL 头文件）。
 - playground 现有：`products` 表 + fixture 3 行，`products::Model::list_on_sale`，`GET /api/admin/products`。
 - 下一课：第 5 课 scaffold 脚手架。
+- 第 4 课答疑（迁移/entities/seed）核实：`db down [STEPS]` 默认 1；无 `db up`/`db fresh`；`db reset` = `M::fresh`+migrate（不 seed）；`db truncate` = `Hooks::truncate`（`delete_many`，只清列出的表）；`seed --reset` 先 `db::reset` 再 `Hooks::seed`；`auto_migrate` 只在 `create_app`（start / 测试 boot）里经 `converge` 生效，`db` 子命令不经过。`generate migration` 不自动 migrate/entities，但也跑 cargo fmt。手动 ALTER 加列 → entities 会带上 → reset 后列没了 → seed 报 `has no column named note`、接口 500 `no such column`。CLI reference 写 DbCommands 在 `cli.rs:505-520`，1.2.0 实为 505–541。sku 演示列已回滚干净。

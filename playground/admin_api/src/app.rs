@@ -74,8 +74,11 @@ impl Hooks for App {
     async fn seed(ctx: &AppContext, base: &Path) -> Result<()> {
         db::seed::<users::ActiveModel>(&ctx.db, &base.join("users.yaml").display().to_string())
             .await?;
-        db::seed::<products::ActiveModel>(&ctx.db, &base.join("products.yaml").display().to_string())
-            .await?;
+        db::seed::<products::ActiveModel>(
+            &ctx.db,
+            &base.join("products.yaml").display().to_string(),
+        )
+        .await?;
         Ok(())
     }
 }

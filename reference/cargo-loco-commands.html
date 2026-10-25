@@ -73,10 +73,15 @@ injected: "tests/requests/mod.rs"</code></pre>
 cargo loco generate model product name:string! price:int status:string
 cargo loco db status                              # 每个 migration：Applied / Pending
 cargo loco db migrate                             # 执行所有 Pending 的 up
-cargo loco db down                                # 回滚最近 1 个（db down 2 回滚 2 个），会删表
+cargo loco db down                                # 回滚最近 1 个，执行它的 down()
+cargo loco db down 2                              # 回滚最近 2 个
+cargo loco db reset                               # 删所有表 → 重跑全部 migration（不 seed）
+cargo loco db truncate                            # 调 Hooks::truncate，清数据不删表
 cargo loco db entities                            # 按当前数据库重写 src\models\_entities\
 cargo loco db seed --reset                        # 删表 → 重跑 migration → 读 src\fixtures\*.yaml
-cargo test --test mod models::products</code></pre>
+cargo test --test mod models::products
+cargo loco generate migration AddSkuToProducts sku:string   # 只写文件，不自动执行
+cargo loco db migrate; cargo loco db entities                # 再手动这两步</code></pre>
 <pre class="output"><code>added: "migration/src/m20261025_124100_products.rs"
 injected: "migration/src/lib.rs"
 injected: "migration/src/lib.rs"
@@ -88,7 +93,10 @@ injected: "tests/models/mod.rs"</code></pre>
 <li><code>_entities\</code> 每次整个重写，别手改；<code>models\&lt;name&gt;.rs</code> 只生成一次，代码写这里。</li>
 <li>生成器会对整个项目跑 <code>cargo fmt</code>：生成前先 <code>git commit</code>。</li>
 <li>seed 要自己在 <code>app.rs</code> 的 <code>Hooks::seed</code> / <code>truncate</code> 里加一行。不带 <code>--reset</code> 重复 seed 会报 <code>UNIQUE constraint failed</code>。</li>
-<li>开发环境 <code>config\development.yaml</code> 里 <code>auto_migrate: true</code>：<code>cargo loco start</code> 启动时会自动跑 Pending 的 migration。</li>
+<li>开发环境 <code>config\development.yaml</code> 里 <code>auto_migrate: true</code>：<code>cargo loco start</code> 启动时会自动跑 Pending 的 migration。<code>cargo loco db ...</code> 子命令不受它影响。</li>
+<li>没有 <code>db up</code> / <code>db fresh</code> 子命令。</li>
+<li><code>db truncate</code> 只清 <code>Hooks::truncate</code> 里列出的表；<code>db seed --reset</code> 是删表重建，不是 truncate。</li>
+<li>只在数据库里手动改表、不写 migration：<code>db entities</code> 会照着生成字段，但下次 <code>db reset</code> 或 <code>seed --reset</code> 就没了，seed 和查询都会报 <code>no such column</code>。</li>
 </ul>
 
 <h3>测试</h3>
