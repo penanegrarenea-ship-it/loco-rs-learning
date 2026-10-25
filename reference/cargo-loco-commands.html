@@ -54,7 +54,25 @@
 <tr><td><code>watch</code></td><td>改代码自动重启</td><td>需另装 <code>cargo-watch</code>（据文档，未实测）</td></tr>
 </table>
 
-<h3>常用（第 1、2 课）</h3>
+<h3><code>generate controller</code>（第 3 课实测）</h3>
+<pre><code>cargo loco generate controller &lt;NAME&gt; [ACTIONS]... [--auth]
+cargo loco generate controller admin ping</code></pre>
+<pre class="output"><code>added: "src/controllers/admin.rs"
+injected: "src/controllers/mod.rs"
+injected: "src/app.rs"
+added: "tests/requests/admin.rs"
+injected: "tests/requests/mod.rs"</code></pre>
+<ul>
+<li>默认生成 <code>index</code> + 每个 action 一个 handler，都返回 <code>format::empty()</code>，全用 <code>get</code>。</li>
+<li>前缀会变复数：<code>admin</code> → <code>.prefix("api/admins/")</code>，需要的话手改。</li>
+<li>默认公开；<code>--auth</code> 给每个 handler 加 <code>auth::JWT</code>。</li>
+<li>在 <code>app.rs</code> 的 <code>routes()</code> 里自动加 <code>.add_route(controllers::admin::routes())</code>。</li>
+</ul>
+<h3>测试</h3>
+<pre><code>cargo test --test mod requests::admin   # 集成测试只有一个目标：mod（tests\mod.rs）</code></pre>
+<p>官方 how-to 写的 <code>cargo test --test requests_notes</code> 在 1.2.0 生成的项目里不存在（实测报 <code>no test target named ...</code>）。</p>
+
+<h3>常用（第 1–3 课）</h3>
 <p>Windows 11 PowerShell 写法（我在 Linux 上验证，输出照实）：</p>
 <pre><code>cargo loco start                                  # 默认 http://localhost:5150
 $env:PORT=5151; cargo loco start                  # 换端口（已实测）
@@ -64,6 +82,7 @@ cargo loco middleware                             # 列中间件，启用的在�
 curl.exe http://localhost:5150/_ping              # {"ok":true}
 curl.exe http://localhost:5150/_health            # {"ok":true}
 curl.exe http://localhost:5150/_readiness         # {"ok":true}
+curl.exe -s "http://localhost:5150/api/admin/stats/users?limit=2"   # 带 ? 的 URL 加引号
 Invoke-RestMethod http://localhost:5150/_ping     # ok : True</code></pre>
 <p>在 PowerShell 里写 <code>curl.exe</code> 而不是 <code>curl</code>：Windows PowerShell 5.1 的 <code>curl</code> 是 <code>Invoke-WebRequest</code> 的别名。</p>
 

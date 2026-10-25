@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 3 课：手写 controller 并注册路由</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="course">Loco 速学 · 第 3 课 · Loco 1.2.0 · <a href="../index.html">目录</a> · <a href="../reference/cargo-loco-commands.html">命令速查</a> · <a href="../reference/axum-to-loco.html">axum→Loco</a></header>
+
+<h1>手写 controller 并注册路由</h1>
+<p class="lede">目标：给后台加一个 <code>GET /api/admin/stats/{section}?limit=2</code>，返回写死的 JSON，带一个 Path 参数和一个 Query 参数。不碰数据库。</p>
+
+<h2>1. 先知道三件事</h2>
+<p><strong>controller = 一个文件 + 一个 <code>pub fn routes()</code>。</strong>上一课你看到 <code>auth.rs</code> 就是这样。新 controller 要生效，还得在 <code>controllers\mod.rs</code> 里 <code>pub mod</code>、在 <code>app.rs</code> 里 <code>add_route</code>。生成器 <code>cargo loco generate controller</code> 把这几处一次改好——Rails 的习惯是“先生成，再改”，因为 Rust 没有自动加载，手工接线最容易漏。
+<span class="source">出处：<a href="https://loco.rs/docs/how-to/add-controller/">Add a controller</a></span></p>
+
+<p><strong><code>format::json(v)</code> 就是 Loco 版的 <code>Json(v)</code>。</strong>1.2.0 源码 <a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/controller/format.rs"><code>src/controller/format.rs</code></a>：</p>
+<pre><code>pub fn json&lt;T: Serialize&gt;(t: T) -&gt; Result&lt;Response&gt; {
+    render().json(t)
+}</code></pre>
+<p>它序列化后设 <code>content-type: application/json</code>；源码注释写明“Mirrors <code>axum::Json</code>'s behavior”——序列化失败时和 <code>axum::Json</code> 一样回 500 纯文本，而不是返回 <code>Err</code>。区别只在类型：axum 里你写 <code>-&gt; Json&lt;T&gt;</code> 或 <code>impl IntoResponse</code>，Loco 惯例统一写 <code>-&gt; Result&lt;Response&gt;</code>，这样 handler 里能直接用 <code>?</code> 返回 Loco 的错误。</p>
+<table>
+<tr><th>axum</th><th>Loco</th></tr>
+<tr><td><code>async fn h() -&gt; Json&lt;Stats&gt; { Json(stats) }</code></td><td><code>async fn h() -&gt; Result&lt;Response&gt; { format::json(stats) }</code></td></tr>
+</table>
+
+<p><strong><code>Path</code>、<code>Query</code> 就是 axum 的。</strong><code>loco_rs::prelude::*</code> 直接重新导出 <code>axum::extract::{Path, Query, State, Form, Multipart}</code>，用法、报错都和你学过的一样（下面会看到解析失败的 400）。
+<span class="source">出处：1.2.0 源码 <a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/prelude.rs"><code>src/prelude.rs</code></a></span></p>
+
+<h2>2. 动手（在 <code>playground\admin_api</code> 真跑过）</h2>
+<p>Windows 11 PowerShell 写法，在 <code>admin_api\</code> 根目录执行。我在 Linux 版 PowerShell 7 上跑，输出照实贴，路径显示为 <code>/</code>，你那边是 <code>\</code>。生成和改代码前先 <code>Ctrl+C</code> 停掉服务。</p>
+
+<span class="label">① 生成 controller（先看帮助）</span>
+<pre><code>cargo loco generate controller --help</code></pre>
+<pre class="output"><code>Usage: admin_api-cli generate controller [OPTIONS] &lt;NAME&gt; [ACTIONS]...
+
+Arguments:
+  &lt;NAME&gt;        Name of the thing to generate
+  [ACTIONS]...  Actions
+
+Options:
+      --auth                       Add an `auth::JWT` extractor to every generated handler. A generated controller is public by default — the mirror of scaffold's `--no-auth`</code></pre>
+<pre><code>cargo loco generate controller admin ping</code></pre>
+<pre class="output"><code>added: "src/controllers/admin.rs"
+injected: "src/controllers/mod.rs"
+injected: "src/app.rs"
+added: "tests/requests/admin.rs"
+injected: "tests/requests/mod.rs"
+* Controller `Admin` was added successfully.
+* Tests for controller `Admin` was added successfully. Run `cargo test`.</code></pre>
+<p>新增 2 个文件，改了 3 个文件。没加 <code>--auth</code>，所以生成的路由是公开的。</p>
+
+<span class="label">② 看它往哪里注入了</span>
+<pre><code>Select-String -Path src\app.rs -Pattern 'add_route|with_default_routes'
+Select-String -Path src\controllers\mod.rs,tests\requests\mod.rs -Pattern 'admin'</code></pre>
+<pre class="output"><code>src/app.rs:49:        AppRoutes::with_default_routes() // controller routes below
+src/app.rs:50:            .add_route(controllers::admin::routes())
+src/app.rs:51:            .add_route(controllers::auth::routes())
+
+src/controllers/mod.rs:3:pub mod admin;
+tests/requests/mod.rs:4:pub mod admin;</code></pre>
+<p>第 50 行就是上一课回忆题的答案——生成器替你写了 <code>add_route</code>。</p>
+
+<span class="label">③ 生成的 controller 原样</span>
+<pre><code>#[debug_handler]
+pub async fn index(State(_ctx): State&lt;AppContext&gt;) -&gt; Result&lt;Response&gt; {
+    format::empty()
+}
+
+#[debug_handler]
+pub async fn ping(State(_ctx): State&lt;AppContext&gt;) -&gt; Result&lt;Response&gt; {
+    format::empty()
+}
+
+pub fn routes() -&gt; Routes {
+    Routes::new()
+        .prefix("api/admins/")
+        .add("/", get(index))
+        .add("ping", get(ping))
+}</code></pre>
+<div class="note"><strong>注意前缀是 <code>api/admins/</code>：</strong>生成器把名字变成了复数（Rails 习惯，资源名用复数）。我们要的是 <code>/api/admin</code>，所以下一步手动改前缀。改完后旧地址 <code>/api/admins/ping</code> 就是 404。</div>
+
+<span class="label">④ 手改：前缀、让 ping 返回 JSON、加 stats handler</span>
+<p><code>src\controllers\admin.rs</code> 改完的全文：</p>
+<pre><code>#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::unnecessary_struct_initialization)]
+#![allow(clippy::unused_async)]
+use loco_rs::prelude::*;
+use serde::{Deserialize, Serialize};
+
+#[debug_handler]
+pub async fn index(State(_ctx): State&lt;AppContext&gt;) -&gt; Result&lt;Response&gt; {
+    format::empty()
+}
+
+#[debug_handler]
+pub async fn ping(State(_ctx): State&lt;AppContext&gt;) -&gt; Result&lt;Response&gt; {
+    format::json(serde_json::json!({ &quot;pong&quot;: true }))
+}
+
+/// `?limit=2` —— 可选的查询参数
+#[derive(Debug, Deserialize)]
+pub struct StatsQuery {
+    pub limit: Option&lt;usize&gt;,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatItem {
+    pub name: &amp;&#x27;static str,
+    pub value: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatsResponse {
+    pub section: String,
+    pub limit: usize,
+    pub items: Vec&lt;StatItem&gt;,
+}
+
+/// GET /api/admin/stats/{section}?limit=2 —— 先返回写死的数据，下一课换成数据库
+#[debug_handler]
+pub async fn stats(
+    Path(section): Path&lt;String&gt;,
+    Query(q): Query&lt;StatsQuery&gt;,
+) -&gt; Result&lt;Response&gt; {
+    let all = [
+        (&quot;total&quot;, 42),
+        (&quot;active_today&quot;, 7),
+        (&quot;pending_review&quot;, 3),
+    ];
+    let limit = q.limit.unwrap_or(all.len()).min(all.len());
+    let items = all
+        .iter()
+        .take(limit)
+        .map(|(name, value)| StatItem { name, value: *value })
+        .collect();
+    format::json(StatsResponse {
+        section,
+        limit,
+        items,
+    })
+}
+
+pub fn routes() -&gt; Routes {
+    Routes::new()
+        .prefix(&quot;api/admin/&quot;)
+        .add(&quot;/&quot;, get(index))
+        .add(&quot;ping&quot;, get(ping))
+        .add(&quot;stats/{section}&quot;, get(stats))
+}
+</code></pre>
+<p>和 axum 比：<code>Path(section): Path&lt;String&gt;</code>、<code>Query(q): Query&lt;StatsQuery&gt;</code> 一字不差；路由占位符是 axum 0.8 的 <code>{section}</code>；<code>get(stats)</code> 是 axum 的 <code>MethodRouter</code>。这个 handler 用不到 <code>AppContext</code>，所以没写 <code>State</code>，和 axum 一样，不需要的 extractor 可以不写。</p>
+
+<span class="label">⑤ 确认注册上了</span>
+<pre><code>cargo loco routes</code></pre>
+<pre class="output"><code>/_health GET                                       /_health
+/_ping GET                                         /_ping
+/_readiness GET                                    /_readiness
+/api
+   ├─ /admin
+   │  ├─ GET                                       /api/admin
+   │  ├─ /ping GET                                 /api/admin/ping
+   │  └─ /stats/{section} GET                      /api/admin/stats/{section}
+   └─ /auth
+      ├─ /current GET                              /api/auth/current
+      ……（auth 9 条同上一课）</code></pre>
+
+<span class="label">⑥ 启动，另开一个 PowerShell 窗口验证</span>
+<pre><code>cargo loco start</code></pre>
+<pre><code>curl.exe -s -i http://localhost:5150/api/admin/ping</code></pre>
+<pre class="output"><code>HTTP/1.1 200 OK
+content-type: application/json
+x-request-id: d7bba80a-8a02-4b7f-bb52-8048884a2a0a
+x-powered-by: loco.rs
+content-length: 13
+
+{"pong":true}</code></pre>
+<pre><code>curl.exe -s "http://localhost:5150/api/admin/stats/users?limit=2"
+curl.exe -s http://localhost:5150/api/admin/stats/orders</code></pre>
+<pre class="output"><code>{"section":"users","limit":2,"items":[{"name":"total","value":42},{"name":"active_today","value":7}]}
+{"section":"orders","limit":3,"items":[{"name":"total","value":42},{"name":"active_today","value":7},{"name":"pending_review","value":3}]}</code></pre>
+<p>带 <code>?</code> 的 URL 要加引号，否则 PowerShell 可能把 <code>&amp;</code> 等字符当语法。</p>
+<pre><code>Invoke-RestMethod "http://localhost:5150/api/admin/stats/users?limit=2"
+(Invoke-RestMethod "http://localhost:5150/api/admin/stats/users?limit=2").items</code></pre>
+<pre class="output"><code>section limit items
+------- ----- -----
+users       2 {@{name=total; value=42}, @{name=active_today; value=7}}
+
+name         value
+----         -----
+total           42
+active_today     7</code></pre>
+
+<span class="label">⑦ 故意出错，看框架怎么回</span>
+<pre><code>curl.exe -s -i "http://localhost:5150/api/admin/stats/users?limit=abc"</code></pre>
+<pre class="output"><code>HTTP/1.1 400 Bad Request
+content-type: text/plain; charset=utf-8
+……
+Failed to deserialize query string: limit: invalid digit found in string</code></pre>
+<pre><code>curl.exe -s -i -X POST http://localhost:5150/api/admin/ping</code></pre>
+<pre class="output"><code>HTTP/1.1 405 Method Not Allowed
+allow: GET,HEAD
+content-length: 0</code></pre>
+<ul>
+<li><code>limit=abc</code>：axum 的 <code>Query</code> 解析失败，handler 根本没执行，直接 400 纯文本。</li>
+<li>POST 到只注册了 GET 的路径：axum 回 405，并带 <code>allow</code> 头。</li>
+<li>完全没注册的路径（如 <code>/api/admins/ping</code>、带尾斜杠的 <code>/api/admin/</code>）：404，响应体是一页 “Welcome to Loco!” HTML——这是默认开启的 <code>fallback</code> 中间件。纯 API 项目以后可以在 <code>config\development.yaml</code> 里关掉它。</li>
+</ul>
+
+<span class="label">⑧ 写 request 测试（可选，但推荐）</span>
+<p>生成器已经建了 <code>tests\requests\admin.rs</code>。我把路径改成 <code>/api/admin</code>，并加了一个 stats 的测试。全文：</p>
+<pre><code>use admin_api::app::App;
+use loco_rs::testing::prelude::*;
+use serial_test::serial;
+
+#[tokio::test]
+#[serial]
+async fn can_get_admins() {
+    request::&lt;App, _, _&gt;(|request, _ctx| async move {
+        let res = request.get(&quot;/api/admin&quot;).await;
+        assert_eq!(res.status_code(), 200);
+
+        // you can assert content like this:
+        // assert_eq!(res.text(), &quot;content&quot;);
+    })
+    .await;
+}
+
+#[tokio::test]
+#[serial]
+async fn can_call_ping() {
+    request::&lt;App, _, _&gt;(|request, _ctx| async move {
+        let res = request.get(&quot;/api/admin/ping&quot;).await;
+        assert_eq!(res.status_code(), 200);
+        assert_eq!(res.text(), r#&quot;{&quot;pong&quot;:true}&quot;#);
+    })
+    .await;
+}
+
+#[tokio::test]
+#[serial]
+async fn can_get_stats_with_path_and_query() {
+    request::&lt;App, _, _&gt;(|request, _ctx| async move {
+        let res = request.get(&quot;/api/admin/stats/users?limit=2&quot;).await;
+        assert_eq!(res.status_code(), 200);
+
+        let body: serde_json::Value = res.json();
+        assert_eq!(body[&quot;section&quot;], &quot;users&quot;);
+        assert_eq!(body[&quot;limit&quot;], 2);
+        assert_eq!(body[&quot;items&quot;].as_array().unwrap().len(), 2);
+    })
+    .await;
+}
+</code></pre>
+<p>你在 axum 里用 <code>oneshot</code> 或 <code>TestServer</code>；这里 <code>request::&lt;App, _, _&gt;</code> 按 <code>config\test.yaml</code> 启动整个 App，回调里的 <code>request</code> 就是 <code>axum_test::TestServer</code>，所以 <code>.get(...)</code>、<code>status_code()</code>、<code>text()</code>、<code>json()</code> 都是 axum-test 的方法。</p>
+<pre><code>cargo test --test mod requests::admin</code></pre>
+<pre class="output"><code>running 3 tests
+test requests::admin::can_call_ping ... ok
+test requests::admin::can_get_admins ... ok
+test requests::admin::can_get_stats_with_path_and_query ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.09s</code></pre>
+<p>所有集成测试都在一个测试目标 <code>mod</code> 里（<code>tests\mod.rs</code>），所以用 <code>--test mod</code> 加模块路径过滤。</p>
+
+<div class="note"><strong>文档和实际不一致处（以 1.2.0 实际为准）</strong>
+<ul>
+<li><a href="https://loco.rs/docs/how-to/add-controller/">Add a controller</a> 的验证步骤写 <code>curl -s localhost:5150/api/notes/</code>（带尾斜杠）。实测带尾斜杠的 <code>/api/admin/</code> 返回 404，只有 <code>/api/admin</code> 是 200。</li>
+<li>同一页写 <code>cargo test --test requests_notes</code>。实际没有这个测试目标：<code>cargo test --test requests_admin</code> 报 <code>no test target named `requests_admin`</code>，可用的只有 <code>mod</code>。</li>
+<li>文档没提生成器会把 controller 名变复数（<code>admin</code> → <code>api/admins/</code>）。</li>
+</ul></div>
+
+<h2>3. 回忆题</h2>
+<div class="quiz" id="q1">
+<p class="q">请求 <code>/api/admin/stats/users?limit=abc</code> 时，<code>stats</code> 这个 handler 会怎样？</p>
+<button data-ok="0">照常进函数，参数被当成空值</button>
+<button data-ok="1">进不了函数，框架直接回四百</button>
+<button data-ok="0">进了函数后，解析失败回五百</button>
+<p class="fb" aria-live="polite"></p>
+</div>
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  var fb = quiz.querySelector('.fb');
+  quiz.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      quiz.querySelectorAll('button').forEach(function (x) { x.classList.remove('right', 'wrong'); });
+      if (b.dataset.ok === '1') {
+        b.classList.add('right');
+        fb.textContent = '对。extractor 在 handler 之前运行；Query 解析失败就直接返回 400 Bad Request，和 axum 一样。limit 是 Option 也没用——值存在但不是数字。';
+      } else {
+        b.classList.add('wrong');
+        fb.textContent = '不对。Option 只管“没有这个参数”，不管“有但格式错”。extractor 在 handler 之前就失败了。回看第 ⑦ 步的输出。';
+      }
+    });
+  });
+});
+</script>
+
+<h2>4. 练习</h2>
+<div class="task">
+<ol>
+<li>在你的 <code>admin_api</code> 里把第 2 节 ①–⑦ 跑一遍，贴回 <code>cargo loco routes</code> 里 <code>/admin</code> 那一段和 stats 的 <code>curl.exe</code> 输出。</li>
+<li>自己加一个 <code>GET /api/admin/users/{id}</code>：<code>id</code> 用 <code>Path&lt;u64&gt;</code>，返回写死的 <code>{"id": …, "name": "demo"}</code>。分别请求 <code>/api/admin/users/7</code> 和 <code>/api/admin/users/abc</code>，把两个状态码和响应体贴回来。</li>
+<li>给第 2 题写一个 request 测试，跑 <code>cargo test --test mod requests::admin</code>，贴结果。</li>
+<li>间隔复习（不看第 2 课）：生成器往 <code>app.rs</code> 的哪个 <code>Hooks</code> 方法里注入了哪一句？</li>
+</ol>
+</div>
+
+<h2>主要阅读</h2>
+<p><a href="https://loco.rs/docs/how-to/add-controller/">Add a controller</a>（注意上面列的两处不一致），再看 <a href="https://loco.rs/docs/how-to/respond-formats/">Respond with different formats</a> 里 <code>format::</code> 的其他返回方式。</p>
+
+<p>有任何不清楚的，随时直接问我。</p>
+
+<nav class="next">
+<a href="0002-structure-app-rs.html">← 第 2 课：项目结构与 app.rs</a>
+<a href="../reference/axum-to-loco.html">axum→Loco 对照</a>
+<span>第 4 课：model 和 migration（待写） →</span>
+</nav>
+<footer>核实环境：loco 1.2.0 / loco-rs 1.2.0 / rustc 1.99.1 / PowerShell 7.6.8（Linux）· 2026-10-25</footer>
+</body>
+</html>

@@ -39,7 +39,12 @@
 <tr><td><code>axum::Json&lt;T&gt;</code></td><td>prelude 里的 <code>Json&lt;T&gt;</code> 是 Loco 包装（<code>via(axum::Json)</code>），解析失败转成 Loco 的 <code>Error</code></td></tr>
 <tr><td>自己写校验</td><td><code>JsonValidate&lt;T&gt;</code>、<code>JsonValidateWithMessage&lt;T&gt;</code>（基于 <code>validator</code>）</td></tr>
 <tr><td>自己写鉴权 extractor</td><td><code>auth::JWT</code>（生成项目的 <code>current</code> handler 第一个参数就是它）</td></tr>
-<tr><td><code>impl IntoResponse</code> / <code>Json(v)</code></td><td>惯例返回 <code>Result&lt;Response&gt;</code>，用 <code>format::json(v)</code>；<code>Result</code> 是 <code>loco_rs::Result</code></td></tr>
+<tr><td><code>impl IntoResponse</code> / <code>Json(v)</code></td><td>惯例返回 <code>Result&lt;Response&gt;</code>，用 <code>format::json(v)</code>；<code>Result</code> 是 <code>loco_rs::Result</code>。<code>format::json</code> 源码注释写明行为照搬 <code>axum::Json</code>：设 <code>application/json</code>，序列化失败回 500 纯文本</td></tr>
+<tr><td>空响应 <code>StatusCode::OK</code></td><td><code>format::empty()</code>（生成器的默认返回）；纯文本 <code>format::text("...")</code></td></tr>
+<tr><td><code>Path</code>/<code>Query</code> 解析失败 → 400 纯文本</td><td>一样（就是 axum 的 extractor）。实测 <code>?limit=abc</code> → <code>400</code> <code>Failed to deserialize query string: limit: invalid digit found in string</code></td></tr>
+<tr><td>路径占位符 <code>/{id}</code>（axum 0.8）</td><td>一样：<code>.add("stats/{section}", get(stats))</code></td></tr>
+<tr><td>方法不匹配 → 405</td><td>一样，实测带 <code>allow: GET,HEAD</code></td></tr>
+<tr><td>未匹配路由 → 默认 404 空体（或你设的 <code>fallback</code>）</td><td>404，但响应体是 “Welcome to Loco!” HTML 页：默认开启的 <code>fallback</code> 中间件</td></tr>
 <tr><td><code>#[debug_handler]</code></td><td>prelude 里有，生成代码就在用</td></tr>
 </table>
 
@@ -56,7 +61,7 @@
 <h2>测试</h2>
 <table>
 <tr><th>axum</th><th>Loco</th></tr>
-<tr><td>建 <code>Router</code> + <code>tower::ServiceExt::oneshot</code>，或 <code>axum_test::TestServer</code></td><td><code>request::&lt;App, _, _&gt;(|request, ctx| async move { ... })</code>：框架按 <code>config\test.yaml</code> 启动整个 App，<code>request</code> 就是 <code>axum_test::TestServer</code></td></tr>
+<tr><td>建 <code>Router</code> + <code>tower::ServiceExt::oneshot</code>，或 <code>axum_test::TestServer</code></td><td><code>request::&lt;App, _, _&gt;(|request, ctx| async move { ... })</code>：框架按 <code>config\test.yaml</code> 启动整个 App，<code>request</code> 就是 <code>axum_test::TestServer</code>（<code>.get()</code>、<code>.status_code()</code>、<code>.text()</code>、<code>.json::&lt;T&gt;()</code>）</td></tr>
 <tr><td>自己准备测试数据库</td><td><code>test.yaml</code> 里配好，测试用 <code>#[serial]</code> 串行跑</td></tr>
 </table>
 <pre><code># 跑生成项目里的一个接口测试（已实测通过，首次编译约 38 秒）

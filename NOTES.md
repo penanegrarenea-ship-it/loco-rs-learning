@@ -21,4 +21,5 @@
 - 下一课候选：目录结构（src/app.rs 的 Hooks、controllers、models、dtos、config）。
 - 第 2 课发现：`cargo loco routes` 实际是树形输出，add-controller 文档示例是扁平 `[GET] /_ping`；Hooks 参考页行号过时（1.2.0 `trait Hooks` 在 src/app.rs:422），且说 impl Hooks 由 `cargo loco generate` 生成（实为 `loco new`）；`--assets none` 项目里 `src/views/` 放 JSON 响应结构体，另有 `src/dtos/`。
 - 官方 doctrine 反对 services/repositories 层（Active Record，胖 model）。DDD 拆层与此冲突，讲到时要明说是取舍。
-- 下一课：第 3 课 路由和 controller（`cargo loco generate controller`、Routes API、extractor、format::json）。
+- 第 3 课发现：`generate controller admin` 前缀变复数 `api/admins/`；add-controller 文档的 `curl .../api/notes/`（尾斜杠）实测 404；文档的 `cargo test --test requests_notes` 不存在，只有 `--test mod`；未匹配路由回 404 + “Welcome to Loco!” HTML（fallback 中间件）。playground 里已有 `controllers/admin.rs`（ping、stats/{section}?limit）和 3 个 request 测试。
+- 下一课：第 4 课 model 和 migration（可把 stats 换成真数据库查询）。
