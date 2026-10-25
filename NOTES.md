@@ -22,4 +22,9 @@
 - 第 2 课发现：`cargo loco routes` 实际是树形输出，add-controller 文档示例是扁平 `[GET] /_ping`；Hooks 参考页行号过时（1.2.0 `trait Hooks` 在 src/app.rs:422），且说 impl Hooks 由 `cargo loco generate` 生成（实为 `loco new`）；`--assets none` 项目里 `src/views/` 放 JSON 响应结构体，另有 `src/dtos/`。
 - 官方 doctrine 反对 services/repositories 层（Active Record，胖 model）。DDD 拆层与此冲突，讲到时要明说是取舍。
 - 第 3 课发现：`generate controller admin` 前缀变复数 `api/admins/`；add-controller 文档的 `curl .../api/notes/`（尾斜杠）实测 404；文档的 `cargo test --test requests_notes` 不存在，只有 `--test mod`；未匹配路由回 404 + “Welcome to Loco!” HTML（fallback 中间件）。playground 里已有 `controllers/admin.rs`（ping、stats/{section}?limit）和 3 个 request 测试。
-- 下一课：第 4 课 model 和 migration（可把 stats 换成真数据库查询）。
+- 第 3 课练习待交（用户在外面，回来补；收到后再写 learning-records/0003 和 GLOSSARY）。
+- 第 4 课发现：`generate model` 写 migration → 注入 `migration/src/lib.rs` 两处 → 加 tests/models → 自动 `db migrate` + `db entities`；结尾提示 “You can now apply it with `cargo loco db migrate && cargo loco db entities`” 是多余的（Your First App 也说已应用）。`db entities` 依赖外部 sea-orm-cli（add-model 页没提），缺它时停在一半（migration 已执行）。`db entities` 整个重写 `_entities/`（连 users.rs 头注释和 derive 顺序也变）；`models/<name>.rs` 仅不存在时创建（`fix_entities` 的 `if !new_file.exists()`）。生成后对整个项目跑 `cargo fmt`（`src/cli.rs` `format_generated_code`，改了第 3 课的 admin.rs 格式）。`int` → `BigIntegerNull`/`Option<i64>`。seed 需手动在 `Hooks::seed/truncate` 加行；fixture 缺 NOT NULL 列报 `missing field`；不带 `--reset` 重复 seed 报 `UNIQUE constraint failed: users.id`。开发环境 `auto_migrate: true`：`db down` 后 `cargo loco start` 会自动重新建表（第 4 课练习 3 的答案）。
+- fixture 用英文商品名：避免 Windows 控制台/PS 5.1 对中文 JSON 的编码问题（官方没写，不在课里讲）。
+- 教练机已装 sea-orm-cli 2.0.4（`--no-default-features --features codegen,sqlx-sqlite,sqlx-postgres,runtime-tokio-rustls`，因缺 OpenSSL 头文件）。
+- playground 现有：`products` 表 + fixture 3 行，`products::Model::list_on_sale`，`GET /api/admin/products`。
+- 下一课：第 5 课 scaffold 脚手架。

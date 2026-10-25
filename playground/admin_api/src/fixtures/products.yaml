@@ -1,0 +1,19 @@
+---
+- id: 1
+  name: Mechanical Keyboard
+  price: 399
+  status: on_sale
+  created_at: "2026-10-25T00:00:00Z"
+  updated_at: "2026-10-25T00:00:00Z"
+- id: 2
+  name: Monitor Arm
+  price: 129
+  status: on_sale
+  created_at: "2026-10-25T00:00:00Z"
+  updated_at: "2026-10-25T00:00:00Z"
+- id: 3
+  name: Old Mouse
+  price: 59
+  status: off_shelf
+  created_at: "2026-10-25T00:00:00Z"
+  updated_at: "2026-10-25T00:00:00Z"

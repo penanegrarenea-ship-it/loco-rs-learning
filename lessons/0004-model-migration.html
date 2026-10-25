@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 4 课：model 和 migration</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="course">Loco 速学 · 第 4 课 · Loco 1.2.0 · <a href="../index.html">目录</a> · <a href="../reference/cargo-loco-commands.html">命令速查</a> · <a href="../reference/axum-to-loco.html">axum→Loco</a></header>
+
+<h1>model 和 migration</h1>
+<p class="lede">目标：用一条命令建出后台的 <code>product</code> 表（<code>name:string! price:int status:string</code>），弄清它生成了哪些文件、怎么注册的，然后在 admin controller 里加 <code>GET /api/admin/products</code>，从数据库读“在售商品”。</p>
+
+<h2>1. 先知道三件事</h2>
+<p><strong>一个 model = 一个 migration + 一个生成的 entity + 一个你自己的 model 文件。</strong>migration 描述“表长什么样”；entity（<code>src\models\_entities\products.rs</code>）是 SeaORM 根据<em>数据库里的真实表</em>生成的 Rust 类型；<code>src\models\products.rs</code> 才是你写代码的地方。
+<span class="source">出处：<a href="https://loco.rs/docs/how-to/add-model/">Add a model</a></span></p>
+
+<p><strong><code>_entities\</code> 每次都整个重写，别手改；<code>models\products.rs</code> 只生成一次。</strong>1.2.0 源码 <a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/db/entities.rs"><code>src/db/entities.rs</code></a>：<code>db entities</code> 调外部程序 <code>sea-orm-cli</code> 把所有表重新生成到 <code>_entities\</code>，再由 <code>fix_entities()</code> 检查 <code>src/models/&lt;表名&gt;.rs</code>：<code>if !new_file.exists()</code> 才创建，并往 <code>models\mod.rs</code> 追加 <code>pub mod</code>。所以你的代码放在 <code>models\products.rs</code> 里，以后改表、重新生成也不会丢。</p>
+
+<p><strong>业务规则写在 model 上，controller 只调用。</strong>Loco 是 Active Record 风格：官方 doctrine 主张“胖 model、瘦 controller”，不另建 <code>services/</code>、<code>repositories/</code> 层。“什么算在售”这种规则就写成 <code>impl Model</code> 上的方法；保存前后的钩子写在 <code>impl ActiveModelBehavior</code> 里。
+<span class="source">出处：<a href="https://loco.rs/skills/loco/doctrine.md">Loco doctrine</a></span></p>
+
+<h2>2. 动手（在 <code>playground\admin_api</code> 真跑过）</h2>
+<p>PowerShell 写法，在 <code>admin_api\</code> 根目录执行，先 <code>Ctrl+C</code> 停掉服务。我在 Linux 版 PowerShell 7 上跑，输出照实贴（日志行去掉了颜色和时间戳以外的噪音，路径显示为 <code>/</code>）。</p>
+
+<span class="label">⓪ 先装 sea-orm-cli（只装一次）</span>
+<pre><code>cargo install sea-orm-cli</code></pre>
+<p><a href="https://loco.rs/docs/tutorials/your-first-app/">Your First App</a> 第一步就让你和 <code>loco</code> 一起装它；我们第 1 课没装。没装时 <code>generate model</code> 会<strong>做到一半</strong>：migration 已写好、已执行，到生成 entity 这一步才失败：</p>
+<pre class="output"><code>Error: Message("SeaORM CLI was not found To fix, run:\n      $ cargo install sea-orm-cli")
+Error: Generators(Message("failed to run loco db entities. error details: `command [\"cargo\", \"loco-tool\", \"db\", \"entities\"] exited with code 1`"))</code></pre>
+<p>如果你遇到了：装好 sea-orm-cli 后补一句 <code>cargo loco db entities</code> 就能接上（它会建出 <code>models\products.rs</code>）。<br>
+<small>（教练机器缺 OpenSSL 开发包，用的是 <code>cargo install sea-orm-cli --no-default-features --features codegen,sqlx-sqlite,sqlx-postgres,runtime-tokio-rustls</code>，装出来同为 2.0.4。你在 Windows 上先用上面的官方命令。）</small></p>
+
+<span class="label">① 看帮助，再生成</span>
+<pre><code>cargo loco generate model --help</code></pre>
+<pre class="output"><code>Usage: admin_api-cli generate model [OPTIONS] &lt;NAME&gt; [FIELDS]...
+
+Arguments:
+  &lt;NAME&gt;       Name of the thing to generate
+  [FIELDS]...  Model fields, eg. title:string hits:int
+
+Options:
+      --without-tz                 Generate model without timestamps (`created_at`, `updated_at` columns)
+  -e, --environment &lt;ENVIRONMENT&gt;  Specify the environment [default: development]</code></pre>
+<pre><code>cargo loco generate model product name:string! price:int status:string</code></pre>
+<pre class="output"><code>added: "migration/src/m20261025_124100_products.rs"
+injected: "migration/src/lib.rs"
+injected: "migration/src/lib.rs"
+added: "tests/models/products.rs"
+injected: "tests/models/mod.rs"
+ WARN app: loco_rs::boot: migrate: environment=development
+ WARN app: loco_rs::boot: entities: environment=development
+Connecting to SQLite ...
+Discovering schema ...
+... discovered.
+Generating products.rs
+    &gt; Column `created_at`: DateTimeWithTimeZone, not_null
+    &gt; Column `updated_at`: DateTimeWithTimeZone, not_null
+    &gt; Column `id`: i64, auto_increment, not_null
+    &gt; Column `name`: String, not_null
+    &gt; Column `price`: Option&lt;i64&gt;
+    &gt; Column `status`: Option&lt;String&gt;
+Generating users.rs
+    ……（users 的列，略）
+Writing src/models/_entities/products.rs
+Writing src/models/_entities/users.rs
+Writing src/models/_entities/mod.rs
+Writing src/models/_entities/prelude.rs
+... Done.
+* Migration for `product` added! You can now apply it with `$ cargo loco db migrate &amp;&amp; cargo loco db entities`.
+* A test for model `Products` was added. Run with `cargo test`.</code></pre>
+<p>迁移文件名里的时间戳每次不同（下文用我项目里的 <code>m20261025_123659_products</code>）。看输出顺序：先写文件 → <code>migrate</code> → <code>entities</code>。最后那句 “You can now apply it with …” <strong>别照做</strong>，两步都已经跑过了，见第 ⑤ 步的说明。</p>
+
+<span class="label">② 它改了哪些文件</span>
+<table>
+<tr><th>文件</th><th>谁写的</th><th>作用</th></tr>
+<tr><td><code>migration\src\m…_products.rs</code></td><td>新增</td><td>建表 / 删表</td></tr>
+<tr><td><code>migration\src\lib.rs</code></td><td>注入 2 处</td><td>注册 migration</td></tr>
+<tr><td><code>src\models\_entities\products.rs</code></td><td>sea-orm-cli 新增</td><td>Model / ActiveModel / Column 类型</td></tr>
+<tr><td><code>src\models\_entities\{mod,prelude,users}.rs</code></td><td>sea-orm-cli <strong>重写</strong></td><td>users.rs 只变了头注释和 derive 顺序</td></tr>
+<tr><td><code>src\models\products.rs</code> + <code>models\mod.rs</code></td><td>fix_entities 新增 / 追加</td><td>你的扩展点</td></tr>
+<tr><td><code>tests\models\products.rs</code> + <code>mod.rs</code></td><td>新增 / 注入</td><td>一条“表能查”的测试</td></tr>
+<tr><td><code>src\controllers\admin.rs</code> 等</td><td><code>cargo fmt</code></td><td>只改格式</td></tr>
+</table>
+<p>最后一行容易忽略：1.2.0 <a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/cli.rs"><code>src/cli.rs</code></a> 的 <code>format_generated_code()</code> 在生成后对整个项目跑 <code>cargo fmt</code>（失败就忽略）。我第 3 课手写的 <code>stats</code> 函数签名被它合成了一行。生成前先 <code>git commit</code>，事后 <code>git diff</code> 一眼就能分清。</p>
+
+<span class="label">③ migration 怎么注册的</span>
+<pre><code>Select-String -Path migration\src\lib.rs -Pattern products</code></pre>
+<pre class="output"><code>migration/src/lib.rs:6:mod m20261025_123659_products;
+migration/src/lib.rs:14:            Box::new(m20261025_123659_products::Migration),</code></pre>
+<p>一处 <code>mod</code>，一处放进 <code>Migrator::migrations()</code> 的 <code>vec!</code>。<code>app.rs</code> 里的 <code>Hooks</code> 通过 <code>migration::Migrator</code> 拿到这个列表——没进 <code>vec!</code> 的 migration 永远不会跑。</p>
+<p>迁移文件全文（<code>ColType</code> 是 Loco 的建表 DSL）：</p>
+<pre><code>async fn up(&amp;self, m: &amp;SchemaManager) -&gt; Result&lt;(), DbErr&gt; {
+    create_table(
+        m,
+        "products",
+        &amp;[
+            ("id", ColType::PkAuto),
+            ("name", ColType::String),
+            ("price", ColType::BigIntegerNull),
+            ("status", ColType::StringNull),
+        ],
+        &amp;[],
+    )
+    .await
+}
+
+async fn down(&amp;self, m: &amp;SchemaManager) -&gt; Result&lt;(), DbErr&gt; {
+    drop_table(m, "products").await
+}</code></pre>
+<table>
+<tr><th>你写的</th><th>ColType</th><th>Rust 字段</th></tr>
+<tr><td><code>name:string!</code></td><td><code>String</code>（NOT NULL）</td><td><code>String</code></td></tr>
+<tr><td><code>price:int</code></td><td><code>BigIntegerNull</code></td><td><code>Option&lt;i64&gt;</code></td></tr>
+<tr><td><code>status:string</code></td><td><code>StringNull</code></td><td><code>Option&lt;String&gt;</code></td></tr>
+<tr><td>（自动）</td><td><code>create_table</code> 自带</td><td><code>created_at</code> / <code>updated_at</code></td></tr>
+</table>
+<p>规则：不带后缀 = 可空（<code>Option</code>），<code>!</code> = 必填，<code>^</code> = 唯一。<code>int</code> 从 1.0 起是 <code>i64</code>，不是 <code>i32</code>。名字 <code>product</code> 被变成复数表名 <code>products</code>，和上一课 controller 前缀一样是 Rails 习惯。
+<span class="source">出处：<a href="https://loco.rs/docs/how-to/add-model/">Add a model §2</a>；源码 <code>loco-gen</code> <code>column.rs</code>：<code>ScalarType::Int | ScalarType::BigInt =&gt; "BigInteger"</code></span></p>
+
+<span class="label">④ 生成的两个 model 文件</span>
+<p><code>src\models\_entities\products.rs</code>（别改）：</p>
+<pre><code>//! `SeaORM` Entity, @generated by sea-orm-codegen 2.0
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
+#[sea_orm(table_name = "products")]
+pub struct Model {
+    pub created_at: DateTimeWithTimeZone,
+    pub updated_at: DateTimeWithTimeZone,
+    #[sea_orm(primary_key)]
+    pub id: i64,
+    pub name: String,
+    pub price: Option&lt;i64&gt;,
+    pub status: Option&lt;String&gt;,
+}</code></pre>
+<p>注意它带 <code>Serialize</code>，所以下面能直接 <code>format::json(items)</code>。<code>src\models\products.rs</code>（你的地方），生成时就有一个 <code>ActiveModelBehavior</code>：更新时自动刷新 <code>updated_at</code>，外加三个空的 <code>impl Model {}</code>（读）、<code>impl ActiveModel {}</code>（写）、<code>impl Entity {}</code>（查询器）。</p>
+
+<span class="label">⑤ db status / down / migrate</span>
+<pre><code>cargo loco db status</code></pre>
+<pre class="output"><code>Migration 'm20220101_000001_users'... Applied
+Migration 'm20261025_123659_products'... Applied</code></pre>
+<p>已经是 Applied，证明 <code>generate model</code> 自己跑过 migrate。下面回滚一步再重新应用：</p>
+<pre><code>cargo loco db down
+cargo loco db status
+cargo loco db migrate
+cargo loco db status</code></pre>
+<pre class="output"><code>Rolling back 1 applied migrations
+……
+Migration 'm20261025_123659_products' has been rolled back
+
+Migration 'm20220101_000001_users'... Applied
+Migration 'm20261025_123659_products'... Pending
+
+Applying migration 'm20261025_123659_products'
+Migration 'm20261025_123659_products' has been applied
+
+Migration 'm20220101_000001_users'... Applied
+Migration 'm20261025_123659_products'... Applied</code></pre>
+<table>
+<tr><th>命令</th><th>做什么</th></tr>
+<tr><td><code>db migrate</code></td><td>执行所有 Pending 的 <code>up</code></td></tr>
+<tr><td><code>db status</code></td><td>列出每个 migration 是 Applied 还是 Pending</td></tr>
+<tr><td><code>db down</code></td><td>执行最近 1 个的 <code>down</code>（<code>db down 2</code> 回滚 2 个；帮助：<code>[STEPS] … [default: 1]</code>）</td></tr>
+<tr><td><code>db entities</code></td><td>按<em>当前数据库</em>重写 <code>_entities\</code>（需 sea-orm-cli）</td></tr>
+</table>
+<p><code>down</code> 会删表，表里的数据一起没了。以后手写 <code>generate migration</code> 改表时，顺序是 <code>db migrate</code> 再 <code>db entities</code>——entity 是从数据库读出来的，顺序反了就生成旧结构。</p>
+
+<span class="label">⑥ 放点数据：fixture + seed</span>
+<p>新建 <code>src\fixtures\products.yaml</code>：</p>
+<pre><code>- id: 1
+  name: Mechanical Keyboard
+  price: 399
+  status: on_sale
+  created_at: "2026-10-25T00:00:00Z"
+  updated_at: "2026-10-25T00:00:00Z"
+- id: 2
+  name: Monitor Arm
+  price: 129
+  status: on_sale
+  created_at: "2026-10-25T00:00:00Z"
+  updated_at: "2026-10-25T00:00:00Z"
+- id: 3
+  name: Old Mouse
+  price: 59
+  status: off_shelf
+  created_at: "2026-10-25T00:00:00Z"
+  updated_at: "2026-10-25T00:00:00Z"</code></pre>
+<p>生成器<strong>不会</strong>帮你接 seed，要在 <code>src\app.rs</code> 的 <code>Hooks</code> 里各加一行（import 改成 <code>models::_entities::{products, users}</code>）：</p>
+<pre><code>async fn truncate(ctx: &amp;AppContext) -&gt; Result&lt;()&gt; {
+    truncate_table(&amp;ctx.db, users::Entity).await?;
+    truncate_table(&amp;ctx.db, products::Entity).await?;   // 新增
+    Ok(())
+}
+async fn seed(ctx: &amp;AppContext, base: &amp;Path) -&gt; Result&lt;()&gt; {
+    db::seed::&lt;users::ActiveModel&gt;(&amp;ctx.db, &amp;base.join("users.yaml").display().to_string())
+        .await?;
+    db::seed::&lt;products::ActiveModel&gt;(&amp;ctx.db, &amp;base.join("products.yaml").display().to_string())
+        .await?;                                          // 新增
+    Ok(())
+}</code></pre>
+<pre><code>cargo loco db seed --reset</code></pre>
+<p>（下面省略了日志前缀 <code>INFO app: sea_orm_migration::migrator::exec:</code>）</p>
+<pre class="output"><code> WARN app: loco_rs::boot: seed: reset=true from=src/fixtures environment=development
+Dropping table 'seaql_migrations'
+Dropping table 'users'
+Dropping table 'products'
+……
+Migration 'm20220101_000001_users' has been applied
+Migration 'm20261025_123659_products' has been applied</code></pre>
+<p><code>--reset</code> = 删表、重跑所有 migration、再 seed，可重复执行。不加 <code>--reset</code> 再跑一次会失败：<code>UNIQUE constraint failed: users.id</code>。NOT NULL 列必须写，我故意删掉 <code>created_at</code> 试过：<code>missing field `created_at`</code>；可空的 <code>price</code>/<code>status</code> 删了能过。
+<span class="source">出处：<a href="https://loco.rs/docs/how-to/seed-data/">Seed data</a></span></p>
+
+<span class="label">⑦ 在 model 上写规则，controller 只调用</span>
+<p><code>src\models\products.rs</code>：把顶部 <code>use sea_orm::entity::prelude::*;</code> 换成 <code>use loco_rs::prelude::*;</code>（要用到 <code>ModelResult</code>、<code>QueryFilter</code>、<code>QueryOrder</code>），导出加上 <code>self</code>，然后填 <code>impl Model</code>：</p>
+<pre><code>pub use super::_entities::products::{self, ActiveModel, Entity, Model};
+use loco_rs::prelude::*;
+
+// implement your read-oriented logic here
+impl Model {
+    /// 后台“在售商品”列表：领域规则（什么算在售）写在 model 上，controller 只调用。
+    pub async fn list_on_sale(db: &amp;DatabaseConnection) -&gt; ModelResult&lt;Vec&lt;Self&gt;&gt; {
+        let items = Entity::find()
+            .filter(products::Column::Status.eq("on_sale"))
+            .order_by_asc(products::Column::Id)
+            .all(db)
+            .await?;
+        Ok(items)
+    }
+}</code></pre>
+<p><code>src\controllers\admin.rs</code> 加三处：</p>
+<pre><code>use crate::models::products;
+
+/// GET /api/admin/products —— 从数据库读在售商品
+#[debug_handler]
+pub async fn products(State(ctx): State&lt;AppContext&gt;) -&gt; Result&lt;Response&gt; {
+    let items = products::Model::list_on_sale(&amp;ctx.db).await?;
+    format::json(items)
+}
+
+// routes() 里：
+        .add("products", get(products))</code></pre>
+<p>和 axum 比：<code>ctx.db</code> 就是你在 axum 里自己塞进 <code>State</code> 的连接池，Loco 在 <code>AppContext</code> 里替你建好了。<code>ModelResult</code> 的错误能被 <code>?</code> 转成 Loco 的 <code>Error</code>，所以 handler 里直接 <code>?</code>。</p>
+
+<span class="label">⑧ 跑起来验证</span>
+<pre><code>cargo loco start</code></pre>
+<pre><code>curl.exe -s http://localhost:5150/api/admin/products</code></pre>
+<pre class="output"><code>[{"created_at":"2026-10-25T00:00:00Z","updated_at":"2026-10-25T00:00:00Z","id":1,"name":"Mechanical Keyboard","price":399,"status":"on_sale"},{"created_at":"2026-10-25T00:00:00Z","updated_at":"2026-10-25T00:00:00Z","id":2,"name":"Monitor Arm","price":129,"status":"on_sale"}]</code></pre>
+<pre><code>Invoke-RestMethod http://localhost:5150/api/admin/products | Format-Table id, name, price, status</code></pre>
+<pre class="output"><code>id name                price status
+-- ----                ----- ------
+ 1 Mechanical Keyboard   399 on_sale
+ 2 Monitor Arm           129 on_sale</code></pre>
+<p>id 3（<code>off_shelf</code>）被 model 上的规则过滤掉了。测试也能过：</p>
+<pre><code>cargo test --test mod models::products</code></pre>
+<pre class="output"><code>test models::products::can_query_products ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.08s</code></pre>
+
+<div class="note"><strong>文档 / 提示和实际不一致处（以 1.2.0 实际为准）</strong>
+<ul>
+<li><code>generate model</code> 成功后打印 “You can now apply it with <code>cargo loco db migrate &amp;&amp; cargo loco db entities</code>”，但两步其实已经跑完（<code>db status</code> 显示 Applied）。<a href="https://loco.rs/docs/tutorials/your-first-app/">Your First App</a> 也写明 model/scaffold “already applied the migration”。这句提示是多余的。</li>
+<li><a href="https://loco.rs/docs/how-to/add-model/">Add a model</a> 没提 <code>db entities</code> 依赖外部的 <code>sea-orm-cli</code>，也没提缺它时会停在一半；只有 Your First App 和 Add a database 页写了要装。</li>
+<li>文档没提生成器会对整个项目跑 <code>cargo fmt</code>，也没提会重写 <code>_entities\users.rs</code> 等已有 entity。</li>
+</ul></div>
+
+<h2>3. 回忆题</h2>
+<div class="quiz" id="q1">
+<p class="q">你在 ① <code>src\models\products.rs</code> 里写了 <code>list_on_sale</code>。之后改表再跑 <code>db entities</code>，它和 ② <code>src\models\_entities\products.rs</code> 会怎样？</p>
+<button data-ok="0">只重写①，②不动</button>
+<button data-ok="1">只重写②，①不动</button>
+<button data-ok="0">①②两个都重写</button>
+<p class="fb" aria-live="polite"></p>
+</div>
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  var fb = quiz.querySelector('.fb');
+  quiz.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      quiz.querySelectorAll('button').forEach(function (x) { x.classList.remove('right', 'wrong'); });
+      if (b.dataset.ok === '1') {
+        b.classList.add('right');
+        fb.textContent = '对。_entities\\ 由 sea-orm-cli 按数据库整个重写；models\\products.rs 只在不存在时创建一次，你的 list_on_sale 很安全。';
+      } else {
+        b.classList.add('wrong');
+        fb.textContent = '不对。① 只在不存在时生成（fix_entities 里的 if !new_file.exists()），之后没人再碰；被 sea-orm-cli 整个重写的是 _entities\\ 下的 ②。';
+      }
+    });
+  });
+});
+</script>
+
+<h2>4. 练习</h2>
+<div class="task">
+<ol>
+<li>在你的 <code>admin_api</code> 里把 ⓪–⑧ 跑一遍（先 <code>git commit</code> 第 3 课的代码）。贴回：<code>generate model</code> 的 <code>added:/injected:</code> 几行、<code>git status --short</code>、<code>Invoke-RestMethod</code> 的表格。</li>
+<li>给 <code>products::Model</code> 加 <code>find_by_id(db, id: i64) -&gt; ModelResult&lt;Self&gt;</code>（找不到时返回 <code>ModelError::EntityNotFound</code>），再在 admin 里加 <code>GET /api/admin/products/{id}</code>。分别请求 <code>/api/admin/products/1</code> 和 <code>/api/admin/products/99</code>，贴两个状态码和响应体。</li>
+<li>停服务，跑 <code>cargo loco db down</code> 和 <code>cargo loco db status</code>；再 <code>cargo loco start</code>，请求 <code>/api/admin/products</code>，贴状态码和响应体。表明明被删了，为什么不报错、而是返回这个结果？（提示：看启动日志的前几行和 <code>config\development.yaml</code> 的 <code>database:</code> 段。）最后用 <code>cargo loco db seed --reset</code> 恢复数据。</li>
+<li>间隔复习（不看第 3 课）：生成器建 controller 时，把 <code>admin</code> 前缀变成了什么？今天生成 model 时，同样的习惯体现在哪里？</li>
+</ol>
+</div>
+
+<h2>主要阅读</h2>
+<p><a href="https://loco.rs/docs/how-to/add-model/">Add a model</a>（注意上面列的不一致处），再看 <a href="https://loco.rs/docs/how-to/seed-data/">Seed data</a>。</p>
+
+<p>有任何不清楚的，随时直接问我。</p>
+
+<nav class="next">
+<a href="0003-routes-controller.html">← 第 3 课：手写 controller 并注册路由</a>
+<a href="../reference/cargo-loco-commands.html">命令速查</a>
+<span>第 5 课：scaffold 脚手架（待写） →</span>
+</nav>
+<footer>核实环境：loco 1.2.0 / loco-rs 1.2.0 / sea-orm-cli 2.0.4 / rustc 1.99.1 / PowerShell 7.6.8（Linux）· 2026-10-25</footer>
+</body>
+</html>

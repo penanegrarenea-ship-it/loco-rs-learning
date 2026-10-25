@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="../assets/style.css">
 </head>
 <body>
-<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0001-loco-new.html">第 1 课</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a></header>
+<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0001-loco-new.html">第 1 课</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a> · <a href="../lessons/0004-model-migration.html">第 4 课</a></header>
 
 <h1>命令速查：<code>loco</code> 与 <code>cargo loco</code></h1>
 <p class="lede">版本：<strong>loco 1.2.0 / loco-rs 1.2.0</strong>（2026-09-22 发布）。下面每条命令都来自真实 <code>--help</code> 输出（2026-10-24，SQLite 项目 <code>admin_api</code>）。用 Postgres 或 <code>--db none</code> 的项目子命令会不同。</p>
@@ -68,11 +68,34 @@ injected: "tests/requests/mod.rs"</code></pre>
 <li>默认公开；<code>--auth</code> 给每个 handler 加 <code>auth::JWT</code>。</li>
 <li>在 <code>app.rs</code> 的 <code>routes()</code> 里自动加 <code>.add_route(controllers::admin::routes())</code>。</li>
 </ul>
+<h3><code>generate model</code> 与 <code>db</code>（第 4 课实测）</h3>
+<pre><code>cargo install sea-orm-cli                         # db entities 要用；没装时 generate model 停在一半
+cargo loco generate model product name:string! price:int status:string
+cargo loco db status                              # 每个 migration：Applied / Pending
+cargo loco db migrate                             # 执行所有 Pending 的 up
+cargo loco db down                                # 回滚最近 1 个（db down 2 回滚 2 个），会删表
+cargo loco db entities                            # 按当前数据库重写 src\models\_entities\
+cargo loco db seed --reset                        # 删表 → 重跑 migration → 读 src\fixtures\*.yaml
+cargo test --test mod models::products</code></pre>
+<pre class="output"><code>added: "migration/src/m20261025_124100_products.rs"
+injected: "migration/src/lib.rs"
+injected: "migration/src/lib.rs"
+added: "tests/models/products.rs"
+injected: "tests/models/mod.rs"</code></pre>
+<ul>
+<li><code>generate model</code> 已自动跑了 <code>db migrate</code> 和 <code>db entities</code>；结尾那句 “You can now apply it with …” 不用照做。</li>
+<li>字段：无后缀 = 可空（<code>Option</code>），<code>!</code> = NOT NULL，<code>^</code> = 唯一；<code>int</code> → <code>i64</code>。<code>--without-tz</code> 不要 <code>created_at/updated_at</code>。</li>
+<li><code>_entities\</code> 每次整个重写，别手改；<code>models\&lt;name&gt;.rs</code> 只生成一次，代码写这里。</li>
+<li>生成器会对整个项目跑 <code>cargo fmt</code>：生成前先 <code>git commit</code>。</li>
+<li>seed 要自己在 <code>app.rs</code> 的 <code>Hooks::seed</code> / <code>truncate</code> 里加一行。不带 <code>--reset</code> 重复 seed 会报 <code>UNIQUE constraint failed</code>。</li>
+<li>开发环境 <code>config\development.yaml</code> 里 <code>auto_migrate: true</code>：<code>cargo loco start</code> 启动时会自动跑 Pending 的 migration。</li>
+</ul>
+
 <h3>测试</h3>
 <pre><code>cargo test --test mod requests::admin   # 集成测试只有一个目标：mod（tests\mod.rs）</code></pre>
 <p>官方 how-to 写的 <code>cargo test --test requests_notes</code> 在 1.2.0 生成的项目里不存在（实测报 <code>no test target named ...</code>）。</p>
 
-<h3>常用（第 1–3 课）</h3>
+<h3>常用（第 1–4 课）</h3>
 <p>Windows 11 PowerShell 写法（我在 Linux 上验证，输出照实）：</p>
 <pre><code>cargo loco start                                  # 默认 http://localhost:5150
 $env:PORT=5151; cargo loco start                  # 换端口（已实测）
@@ -83,10 +106,11 @@ curl.exe http://localhost:5150/_ping              # {"ok":true}
 curl.exe http://localhost:5150/_health            # {"ok":true}
 curl.exe http://localhost:5150/_readiness         # {"ok":true}
 curl.exe -s "http://localhost:5150/api/admin/stats/users?limit=2"   # 带 ? 的 URL 加引号
-Invoke-RestMethod http://localhost:5150/_ping     # ok : True</code></pre>
+Invoke-RestMethod http://localhost:5150/_ping     # ok : True
+Invoke-RestMethod http://localhost:5150/api/admin/products | Format-Table id, name, price, status</code></pre>
 <p>在 PowerShell 里写 <code>curl.exe</code> 而不是 <code>curl</code>：Windows PowerShell 5.1 的 <code>curl</code> 是 <code>Invoke-WebRequest</code> 的别名。</p>
 
-<div class="note"><code>cargo loco doctor</code> 在新项目上会报 <code>❌ SeaORM CLI was not found</code>，提示 <code>cargo install sea-orm-cli</code>。第 1 课不需要；官方教程把它列为安装步骤，用到 <code>db entities</code> 时再装。</div>
+<div class="note"><code>cargo loco doctor</code> 在新项目上会报 <code>❌ SeaORM CLI was not found</code>，提示 <code>cargo install sea-orm-cli</code>。官方教程把它列为安装步骤；第 4 课 <code>generate model</code> 起必须装。</div>
 
 <p class="source">出处：<a href="https://loco.rs/docs/reference/cli/">CLI reference</a>、<a href="https://github.com/loco-rs/loco">github.com/loco-rs/loco</a>（<code>src/cli.rs</code>、<code>loco-new/</code>）。注意：文档 CLI reference 写生成项目的 <code>loco-rs</code> 版本要求“currently 1.1”，源码 <code>loco-new/src/lib.rs</code> 已是 <code>"1.2"</code>，生成的 <code>Cargo.toml</code> 实际为 <code>loco-rs = { version = "1.2" }</code>。</p>
 
