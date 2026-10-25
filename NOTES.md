@@ -27,5 +27,9 @@
 - fixture 用英文商品名：避免 Windows 控制台/PS 5.1 对中文 JSON 的编码问题（官方没写，不在课里讲）。
 - 教练机已装 sea-orm-cli 2.0.4（`--no-default-features --features codegen,sqlx-sqlite,sqlx-postgres,runtime-tokio-rustls`，因缺 OpenSSL 头文件）。
 - playground 现有：`products` 表 + fixture 3 行，`products::Model::list_on_sale`，`GET /api/admin/products`。
-- 下一课：第 5 课 scaffold 脚手架。
 - 第 4 课答疑（迁移/entities/seed）核实：`db down [STEPS]` 默认 1；无 `db up`/`db fresh`；`db reset` = `M::fresh`+migrate（不 seed）；`db truncate` = `Hooks::truncate`（`delete_many`，只清列出的表）；`seed --reset` 先 `db::reset` 再 `Hooks::seed`；`auto_migrate` 只在 `create_app`（start / 测试 boot）里经 `converge` 生效，`db` 子命令不经过。`generate migration` 不自动 migrate/entities，但也跑 cargo fmt。手动 ALTER 加列 → entities 会带上 → reset 后列没了 → seed 报 `has no column named note`、接口 500 `no such column`。CLI reference 写 DbCommands 在 `cli.rs:505-520`，1.2.0 实为 505–541。sku 演示列已回滚干净。
+- 第 4 课练习待交（和第 3 课一起）。
+- 第 5 课发现：1.2.0 `generate scaffold` 只有 `--without-tz`/`--no-auth`；`--api` 隐藏空操作、`--html/--htmx` 报错（`cli.rs` `warn_legacy_scaffold_kind`）；有 `frontend/src/routes.tsx` 才生成 React。默认带 `auth::JWT`（401）。生成 handler 名 list/create/get_one/update/remove，前缀 `/api/categories`，**无 PATCH（405）**、无 `load_item`、无 `Params::update`（0.16.0 模板才有），DTO 在 `src/dtos/<name>.rs`（CreateX/UpdateX/XDto，带 ts-rs）。404 = 文件内 `not_found()` → `{"code":"not_found","message":"category not found","details":null}`。list 分页（默认 page 1 / page_size 25，无上限，0 夹到 1）。无校验（空 name 201）。415/422 状态码对但 body 都是 `{"error":"Bad Request"}`。只生成 model 测试，无 request 测试（use-generators 页说 “+ tests” 含糊；reference 页准确，但行号 cli.rs:268 实为 279）。controller 直接用 `_entities`，绕过 `models/<name>.rs`，但 `ActiveModelBehavior` 仍生效（updated_at 刷新）。scaffold 这次没改已有 entity 内容。
+- playground 现有：categories（含 `Entity::search` + `?q=` 参考答案），dev DB 里 categories 有 id 1/5/6/7；categories 没接 seed/truncate hook。
+- PowerShell JSON body：课里统一用 `@{}` + `ConvertTo-Json` + `-ContentType`；curl.exe 用 `--data-binary "@body.json"`，不讲 PS 5.1 引号细节。
+- 下一课：第 6 课 view 和 JSON 响应 / 校验。

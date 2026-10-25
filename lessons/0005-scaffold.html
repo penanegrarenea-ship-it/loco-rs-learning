@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 5 课：scaffold 一条命令生成 CRUD</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="course">Loco 速学 · 第 5 课 · Loco 1.2.0 · <a href="../index.html">目录</a> · <a href="../reference/cargo-loco-commands.html">命令速查</a> · <a href="../reference/axum-to-loco.html">axum→Loco</a></header>
+
+<h1>scaffold：一条命令生成整套 RESTful CRUD</h1>
+<p class="lede">目标：给后台加“商品分类” <code>category</code>（<code>name:string! description:text</code>），一条 <code>cargo loco generate scaffold</code> 生成表、entity、DTO、controller 和路由，然后用 PowerShell 走一遍 增 / 查 / 改 / 删。</p>
+
+<h2>1. 先知道三件事</h2>
+<p><strong>scaffold = 第 4 课的 model + 一个 CRUD controller + DTO。</strong>migration、entity、<code>models\categories.rs</code>、model 测试都和 <code>generate model</code> 一样，额外多出 <code>src\controllers\categories.rs</code>（5 个 handler + 路由）和 <code>src\dtos\categories.rs</code>（请求 / 响应结构体）。
+<span class="source">出处：<a href="https://loco.rs/docs/reference/generators/">Generators &amp; field types</a>、<a href="https://loco.rs/docs/tutorials/your-first-app/">Your First App §4</a></span></p>
+
+<p><strong>1.2.0 没有 <code>--api</code> 了。</strong><code>--help</code> 里只有 <code>--without-tz</code> 和 <code>--no-auth</code>。生成器会看项目里有没有 <code>frontend\src\routes.tsx</code>：没有就只生成 JSON API（我们是 <code>--assets none</code>，正是这种）。老教程里的 <code>--api</code> 还能写，但什么都不做；<code>--html</code>/<code>--htmx</code> 会直接报错。
+<span class="source">出处：1.2.0 源码 <a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/cli.rs#L397-L425"><code>src/cli.rs</code> <code>warn_legacy_scaffold_kind</code></a></span></p>
+
+<p><strong>默认要登录。</strong>不加 <code>--no-auth</code> 时，每个 handler 都带 <code>auth::JWT</code> 提取器，匿名请求回 401。这课先加 <code>--no-auth</code> 专心看 CRUD，鉴权以后单独讲。</p>
+
+<h2>2. 动手（在 <code>playground\admin_api</code> 真跑过）</h2>
+<p>PowerShell 写法，在 <code>admin_api\</code> 根目录执行，先 <code>Ctrl+C</code> 停服务、<code>git commit</code> 一下。我在 Linux 版 PowerShell 7 上跑，输出照实贴（日志行去掉了时间戳，路径显示为 <code>/</code>）。</p>
+
+<span class="label">① 看帮助</span>
+<pre><code>cargo loco generate scaffold --help</code></pre>
+<pre class="output"><code>Usage: admin_api-cli generate scaffold [OPTIONS] &lt;NAME&gt; [FIELDS]...
+
+Options:
+      --without-tz                 Generate scaffold without timestamps (`created_at`, `updated_at` columns)
+      --no-auth                    Generate public routes. Scaffolded handlers take an `auth::JWT` extractor by default, so they answer 401 without a bearer token</code></pre>
+
+<span class="label">② 生成</span>
+<pre><code>cargo loco generate scaffold category name:string! description:text --no-auth</code></pre>
+<pre class="output"><code>added: "migration/src/m20261025_134358_categories.rs"
+injected: "migration/src/lib.rs"
+injected: "migration/src/lib.rs"
+added: "tests/models/categories.rs"
+injected: "tests/models/mod.rs"
+WARN app: loco_rs::boot: migrate:
+WARN app: loco_rs::boot: entities:
+……（sea-orm-cli 输出，同第 4 课）
+Writing src/models/_entities/categories.rs
+……
+added: "src/controllers/categories.rs"
+injected: "src/controllers/mod.rs"
+injected: "src/app.rs"
+added: "src/dtos/categories.rs"
+injected: "src/dtos/mod.rs"
+* Migration for `category` added! You can now apply it with `$ cargo loco db migrate &amp;&amp; cargo loco db entities`.
+* A test for model `Categories` was added. Run with `cargo test`.
+* Controller `Category` was added successfully.
+* DTO `CategoryDto` was added successfully.</code></pre>
+<p>前半段和第 4 课的 <code>generate model</code> 一模一样（migration 也已经执行了，那句 “You can now apply…” 照旧不用管），后半段是多出来的：</p>
+<table>
+<tr><th>文件</th><th>新增 / 注入</th><th>内容</th></tr>
+<tr><td><code>src\controllers\categories.rs</code></td><td>新增</td><td>5 个 handler + <code>routes()</code></td></tr>
+<tr><td><code>src\controllers\mod.rs</code></td><td>注入</td><td><code>pub mod categories;</code></td></tr>
+<tr><td><code>src\app.rs</code></td><td>注入</td><td><code>.add_route(controllers::categories::routes())</code></td></tr>
+<tr><td><code>src\dtos\categories.rs</code></td><td>新增</td><td><code>CategoryDto</code>、<code>CreateCategory</code>、<code>UpdateCategory</code></td></tr>
+<tr><td><code>src\dtos\mod.rs</code></td><td>注入</td><td><code>pub mod categories;</code></td></tr>
+</table>
+<p>测试只有 model 那条 <code>tests\models\categories.rs</code>（“表能查”），<strong>没有</strong>接口测试。</p>
+
+<span class="label">③ 路由：和 RESTful 约定对一下</span>
+<pre><code>cargo loco routes</code></pre>
+<pre class="output"><code>   └─ /categories
+      ├─ GET                                       /api/categories
+      ├─ POST                                      /api/categories
+      └─ /{id}
+         ├─ GET                                    /api/categories/{id}
+         ├─ PUT                                    /api/categories/{id}
+         └─ DELETE                                 /api/categories/{id}</code></pre>
+<table>
+<tr><th>HTTP</th><th>路径</th><th>handler</th><th>成功时</th></tr>
+<tr><td>GET</td><td><code>/api/categories</code></td><td><code>list</code></td><td>200，分页信封</td></tr>
+<tr><td>POST</td><td><code>/api/categories</code></td><td><code>create</code></td><td>201，新记录</td></tr>
+<tr><td>GET</td><td><code>/api/categories/{id}</code></td><td><code>get_one</code></td><td>200</td></tr>
+<tr><td>PUT</td><td><code>/api/categories/{id}</code></td><td><code>update</code></td><td>200，更新后的记录</td></tr>
+<tr><td>DELETE</td><td><code>/api/categories/{id}</code></td><td><code>remove</code></td><td>204，无响应体</td></tr>
+</table>
+<p>注意两点：<strong>没有 PATCH</strong>（只生成 PUT，PUT 要求整条数据）；前缀是复数 <code>/api/categories</code>，不在第 3 课的 <code>/api/admin</code> 下面——想挂到后台下，改 <code>.prefix("/api/admin/categories")</code> 即可。</p>
+
+<span class="label">④ 生成的 controller（节选，省掉了 create/remove，几处长行合成了一行）</span>
+<pre><code>fn not_found(message: &amp;str) -&gt; Response {
+    let error = ApiError { code: "not_found".to_string(), message: message.to_string(), details: None };
+    (StatusCode::NOT_FOUND, Json(error)).into_response()
+}
+
+async fn list(
+    State(ctx): State&lt;AppContext&gt;,
+    Query(pagination): Query&lt;query::PaginationQuery&gt;,
+) -&gt; Result&lt;Json&lt;Page&lt;CategoryDto&gt;&gt;&gt; {
+    let res = query::paginate(&amp;ctx.db, Entity::find().order_by_asc(Column::Id), None, &amp;pagination).await?;
+    Ok(Json(Page::from_query(res)))
+}
+
+async fn get_one(State(ctx): State&lt;AppContext&gt;, Path(id): Path&lt;i64&gt;) -&gt; Result&lt;Response&gt; {
+    let Some(model) = Entity::find_by_id(id).one(&amp;ctx.db).await? else {
+        return Ok(not_found("category not found"));
+    };
+    Ok(Json(CategoryDto::from(model)).into_response())
+}
+
+async fn update(State(ctx): State&lt;AppContext&gt;, Path(id): Path&lt;i64&gt;, Json(params): Json&lt;UpdateCategory&gt;) -&gt; Result&lt;Response&gt; {
+    let Some(model) = Entity::find_by_id(id).one(&amp;ctx.db).await? else {
+        return Ok(not_found("category not found"));
+    };
+    let mut item = model.into_active_model();
+    item.name = Set(params.name);
+    item.description = Set(params.description);
+    let item = item.update(&amp;ctx.db).await?;
+    Ok(Json(CategoryDto::from(item)).into_response())
+}
+
+pub fn routes() -&gt; Routes {
+    Routes::new()
+        .prefix("/api/categories")
+        .add("/", get(list))
+        .add("/", post(create))
+        .add("/{id}", get(get_one))
+        .add("/{id}", put(update))
+        .add("/{id}", delete(remove))
+}</code></pre>
+<ul>
+<li><strong>404 怎么来的：</strong>每个带 <code>{id}</code> 的 handler 自己 <code>find_by_id(...).one()</code>，查不到就返回本文件的 <code>not_found()</code>：404 + <code>ApiError</code> JSON（<code>src\dtos\common.rs</code>）。没有 <code>load_item</code> 这种公共函数，三处各写一遍。</li>
+<li><strong>有分页：</strong><code>?page=</code> 和 <code>?page_size=</code>，默认第 1 页、每页 25（源码 <a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/model/query/paginate/mod.rs#L4-L12"><code>paginate/mod.rs</code></a>），返回 <code>{items, page, page_size, total_pages, total_items}</code>。</li>
+<li><strong>没有校验：</strong><code>CreateCategory</code> 只是普通的 <code>Deserialize</code> 结构体。缺字段由 axum 的 <code>Json</code> 拒绝；<code>name</code> 传空字符串照样能存进去（下面实测）。</li>
+<li><strong>没用到你的 model：</strong>它直接 <code>use crate::models::_entities::categories::{ActiveModel, Entity}</code>，绕过了 <code>models\categories.rs</code>。不过 <code>models\categories.rs</code> 里的 <code>ActiveModelBehavior</code> 是挂在同一个 <code>ActiveModel</code> 类型上的，所以 <code>update</code> 时自动刷新 <code>updated_at</code> 仍然生效。</li>
+</ul>
+<p>DTO 和 axum 里你自己写的请求/响应结构体是一回事：<code>Json(params): Json&lt;CreateCategory&gt;</code> 就是 axum 的 <code>Json</code> 提取器。<code>CategoryDto</code> 带 <code>ts_rs::TS</code>，可以导出 TypeScript 类型给前端，暂时不用管。</p>
+
+<span class="label">⑤ 用 PowerShell 走一遍 CRUD（另开窗口，服务先 <code>cargo loco start</code>）</span>
+<p><strong>JSON body 怎么写：</strong>最稳的是用哈希表 <code>@{ ... }</code> 交给 <code>ConvertTo-Json</code>，再给 <code>Invoke-RestMethod</code>，完全不用自己处理引号。一定要带 <code>-ContentType "application/json"</code>，不带会回 415（见 ⑥）。用 <code>curl.exe</code> 时，把 JSON 先写进文件再 <code>--data-binary "@body.json"</code>，避开命令行引号转义。</p>
+<pre><code>$base = "http://localhost:5150/api/categories"
+
+# 增（Invoke-RestMethod）
+$body = @{ name = "Electronics"; description = "Keyboards, mice, monitors" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri $base -ContentType "application/json" -Body $body</code></pre>
+<pre class="output"><code>id          : 1
+name        : Electronics
+description : Keyboards, mice, monitors
+created_at  : 10/25/2026 13:47:20
+updated_at  : 10/25/2026 13:47:20</code></pre>
+<pre><code># 增（curl.exe，看状态码）
+Set-Content -Path body.json -Value '{"name":"Books"}'
+curl.exe -s -i -X POST -H "Content-Type: application/json" --data-binary "@body.json" $base</code></pre>
+<pre class="output"><code>HTTP/1.1 201 Created
+content-type: application/json
+……
+{"id":2,"name":"Books","description":null,"created_at":"2026-10-25T13:47:20Z","updated_at":"2026-10-25T13:47:20Z"}</code></pre>
+<p>（我又用同样方式建了第 3 条 <code>Book Covers</code>。）</p>
+<pre><code># 查列表
+curl.exe -s $base
+(Invoke-RestMethod $base).items | Format-Table id, name, description</code></pre>
+<pre class="output"><code>{"items":[{"id":1,"name":"Electronics",……},{"id":2,"name":"Books",……},{"id":3,"name":"Book Covers",……}],"page":1,"page_size":25,"total_pages":1,"total_items":3}
+
+id name        description
+-- ----        -----------
+ 1 Electronics Keyboards, mice, monitors
+ 2 Books
+ 3 Book Covers</code></pre>
+<pre><code># 分页（URL 里有 ? 和 &amp;，加引号；$base 后紧跟 ? 时写成 $($base)）
+Invoke-RestMethod "$($base)?page=2&amp;page_size=2" | Format-List page, page_size, total_pages, total_items, @{n="items";e={$_.items.name}}</code></pre>
+<pre class="output"><code>page        : 2
+page_size   : 2
+total_pages : 2
+total_items : 3
+items       : Book Covers</code></pre>
+<pre><code># 查单个
+Invoke-RestMethod "$base/1"
+
+# 改（PUT 要带全部字段）
+$body = @{ name = "Electronics &amp; Gadgets"; description = "Everything with a plug" } | ConvertTo-Json
+Invoke-RestMethod -Method Put -Uri "$base/1" -ContentType "application/json" -Body $body</code></pre>
+<pre class="output"><code>id          : 1
+name        : Electronics
+description : Keyboards, mice, monitors
+created_at  : 10/25/2026 13:47:20
+updated_at  : 10/25/2026 13:47:20
+
+id          : 1
+name        : Electronics &amp; Gadgets
+description : Everything with a plug
+created_at  : 10/25/2026 13:47:20
+updated_at  : 2026-10-25T13:47:22.597464045Z</code></pre>
+<p><code>updated_at</code> 变了，这就是 <code>models\categories.rs</code> 里 <code>before_save</code> 的作用。它显示成字符串而不是日期，是因为带了 9 位小数秒，PowerShell 没把它转成日期对象，数据本身没问题。</p>
+<pre><code># 删
+curl.exe -s -i -X DELETE "$base/2"</code></pre>
+<pre class="output"><code>HTTP/1.1 204 No Content
+x-request-id: f6661a53-d32a-4f61-9df0-11c318f87145
+x-powered-by: loco.rs</code></pre>
+<pre><code>Invoke-RestMethod -Method Delete "$base/3"     # 204 没有响应体，所以什么都不打印
+(Invoke-RestMethod $base).items | Format-Table id, name</code></pre>
+<pre class="output"><code>id name
+-- ----
+ 1 Electronics &amp; Gadgets</code></pre>
+
+<span class="label">⑥ 故意出错，看各回什么</span>
+<pre><code>curl.exe -s -i "$base/2"                         # 刚删掉的 id</code></pre>
+<pre class="output"><code>HTTP/1.1 404 Not Found
+content-type: application/json
+……
+{"code":"not_found","message":"category not found","details":null}</code></pre>
+<p><code>Invoke-RestMethod</code> 遇到 4xx 会抛异常，用 <code>try/catch</code> 拿状态码和响应体：</p>
+<pre><code>try { Invoke-RestMethod "$base/2" } catch { $_.Exception.Response.StatusCode.value__; $_.ErrorDetails.Message }</code></pre>
+<pre class="output"><code>404
+{
+  "code": "not_found",
+  "message": "category not found",
+  "details": null
+}</code></pre>
+<table>
+<tr><th>请求</th><th>实测结果</th><th>谁拦下的</th></tr>
+<tr><td><code>GET $base/2</code>（不存在）</td><td>404 + <code>{"code":"not_found",…}</code></td><td>生成的 <code>not_found()</code></td></tr>
+<tr><td><code>PATCH $base/1</code></td><td>405，<code>allow: GET,HEAD,PUT,DELETE</code></td><td>axum 路由（没注册 PATCH）</td></tr>
+<tr><td><code>GET $base/abc</code></td><td>400，<code>Invalid URL: Cannot parse `abc` to a `i64`</code></td><td>axum <code>Path&lt;i64&gt;</code></td></tr>
+<tr><td>POST 不带 <code>-ContentType</code></td><td>415，<code>{"error":"Bad Request"}</code></td><td>axum <code>Json</code></td></tr>
+<tr><td>PUT 只给 <code>description</code></td><td>422，<code>{"error":"Bad Request"}</code></td><td>axum <code>Json</code>（缺 <code>name</code>）</td></tr>
+<tr><td>POST <code>@{ name = "" }</code></td><td>201，存进去了</td><td>没人拦：没有校验</td></tr>
+</table>
+<p>415 和 422 的状态码是对的，但响应体都写成 <code>"Bad Request"</code>，看状态码就行。</p>
+
+<span class="label">⑦ 测试</span>
+<pre><code>cargo test</code></pre>
+<pre class="output"><code>test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.60s</code></pre>
+<p>比第 4 课多 1 条：生成的 <code>models::categories::can_query_categories</code>。接口测试要自己写（写法见第 3 课 ⑧）。</p>
+
+<div class="note"><strong>和 DDD 的关系</strong>：scaffold 生成的是“贫血” CRUD：controller 直接拿 entity 读写，没有任何业务规则，<code>models\categories.rs</code> 是空的。它是起点，不是成品。按 Loco 的 doctrine（胖 model、瘦 controller），以后“名称不能为空”“同名分类不能重复”这类规则写进 <code>models\categories.rs</code>，controller 只调用。下面的小任务就是第一步。</div>
+
+<div class="note"><strong>文档 / 旧教程和 1.2.0 实际不一致处</strong>
+<ul>
+<li>1.0 之前的教程和博客写 <code>generate scaffold … --api</code>、<code>--html</code>、<code>--htmx</code>。1.2.0 的 <code>--help</code> 已经没有它们：<code>--api</code> 是隐藏的空操作，<code>--html</code>/<code>--htmx</code> 报错。现在的文档（<a href="https://loco.rs/docs/how-to/use-generators/">Use generators</a>）已经说明了这一点。</li>
+<li>网上常见的旧版 scaffold（如 <a href="https://github.com/loco-rs/loco/blob/v0.16.0/loco-gen/src/templates/scaffold/api/controller.t">0.16.0 的模板</a>）生成 <code>load_item</code>、带 <code>update()</code> 方法的 <code>Params</code> 结构体、<code>add</code> handler 和 PATCH 路由。1.2.0（<a href="https://github.com/loco-rs/loco/blob/v1.2.0/loco-gen/src/templates/scaffold/api/controller.t">现在的模板</a>）都没有：改成了 <code>src\dtos\</code> 里的 <code>CreateCategory</code>/<code>UpdateCategory</code>，handler 叫 <code>create</code>，只有 PUT。</li>
+<li><a href="https://loco.rs/docs/how-to/use-generators/">Use generators</a> 说 scaffold 生成 “controller + routes + tests”，实际只有一条 model 测试，没有接口测试；<a href="https://loco.rs/docs/reference/generators/">Generators reference</a> 写的 “a model test” 才准确。该页标的源码行号（<code>cli.rs:268</code>）在 1.2.0 已是第 279 行。</li>
+</ul></div>
+
+<h2>3. 回忆题</h2>
+<div class="quiz" id="q1">
+<p class="q">对 1.2.0 scaffold 生成的接口发 <code>PATCH /api/categories/1</code>，会得到什么？</p>
+<button data-ok="0">200，只改了字段</button>
+<button data-ok="1">405，路由没注册</button>
+<button data-ok="0">422，请求体不对</button>
+<p class="fb" aria-live="polite"></p>
+</div>
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  var fb = quiz.querySelector('.fb');
+  quiz.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      quiz.querySelectorAll('button').forEach(function (x) { x.classList.remove('right', 'wrong'); });
+      if (b.dataset.ok === '1') {
+        b.classList.add('right');
+        fb.textContent = '对。1.2.0 只生成 GET/POST/GET/PUT/DELETE，没有 PATCH；axum 对“路径存在但方法没注册”回 405，并带 allow: GET,HEAD,PUT,DELETE。';
+      } else {
+        b.classList.add('wrong');
+        fb.textContent = '不对。请求根本到不了 handler：路由里没有 PATCH，axum 直接回 405。回看第 ③ 步的路由表和第 ⑥ 步的实测。';
+      }
+    });
+  });
+});
+</script>
+
+<h2>4. 练习</h2>
+<div class="task">
+<ol>
+<li>在你的 <code>admin_api</code> 里跑 ①–⑥：贴回 <code>generate scaffold</code> 的 <code>added:/injected:</code> 几行、<code>cargo loco routes</code> 里 <code>/categories</code> 那段，以及 增 / 列表 / 查单个 / 改 / 删 各一次的输出。</li>
+<li>小任务：让列表支持 <code>?q=关键字</code>，只返回 <code>name</code> 包含它的分类。要求：查询规则写在 <code>models\categories.rs</code> 的 <code>impl Entity</code> 上，controller 只多一个 <code>Query</code> 参数、调用它。验证 <code>Invoke-RestMethod "$($base)?q=Book"</code> 和 <code>?q=Book&amp;page_size=1</code>，贴输出。</li>
+<li>不看本课：<code>GET /api/categories/abc</code> 和 <code>GET /api/categories/999</code> 分别返回几？各是谁返回的？</li>
+<li>间隔复习（第 4 课）：scaffold 之后，<code>src\models\_entities\categories.rs</code> 和 <code>src\models\categories.rs</code>，哪个下次 <code>db entities</code> 会被重写？</li>
+</ol>
+</div>
+<details>
+<summary>第 2 题参考答案（我在 playground 里实测过，先自己写再看）</summary>
+<p><code>src\models\categories.rs</code>（顶部 <code>use</code> 改成 <code>use loco_rs::prelude::*;</code>，导出加 <code>self</code>）：</p>
+<pre><code>pub use super::_entities::categories::{self, ActiveModel, Entity, Model};
+use loco_rs::prelude::*;
+
+impl Entity {
+    /// 后台分类列表的查询规则：`q` 非空时只要名称包含它的记录，按 id 排序。
+    pub fn search(q: Option&lt;&amp;str&gt;) -&gt; sea_orm::Select&lt;Self&gt; {
+        let select = Self::find().order_by_asc(categories::Column::Id);
+        match q.map(str::trim).filter(|q| !q.is_empty()) {
+            Some(q) =&gt; select.filter(categories::Column::Name.contains(q)),
+            None =&gt; select,
+        }
+    }
+}</code></pre>
+<p><code>src\controllers\categories.rs</code>：</p>
+<pre><code>/// `?q=book` —— 可选的名称关键字
+#[derive(Debug, serde::Deserialize)]
+pub struct ListFilter {
+    pub q: Option&lt;String&gt;,
+}
+
+async fn list(
+    State(ctx): State&lt;AppContext&gt;,
+    Query(pagination): Query&lt;query::PaginationQuery&gt;,
+    Query(filter): Query&lt;ListFilter&gt;,
+) -&gt; Result&lt;Json&lt;Page&lt;CategoryDto&gt;&gt;&gt; {
+    let res = query::paginate(&amp;ctx.db, Entity::search(filter.q.as_deref()), None, &amp;pagination).await?;
+    Ok(Json(Page::from_query(res)))
+}</code></pre>
+<p>（同时把 <code>use</code> 里不再用到的 <code>Column</code> 删掉。两个 <code>Query</code> 提取器可以并存，各取自己的字段。）实测，表里有 Electronics &amp; Gadgets / Books / Book Covers / Stationery：</p>
+<pre class="output"><code>(Invoke-RestMethod "$($base)?q=Book").items | Format-Table id, name
+
+id name
+-- ----
+ 5 Books
+ 6 Book Covers
+
+curl.exe -s "$($base)?q=Book&amp;page_size=1"
+{"items":[{"id":5,"name":"Books",……}],"page":1,"page_size":1,"total_pages":2,"total_items":2}
+
+curl.exe -s "$($base)?q=zzz"
+{"items":[],"page":1,"page_size":25,"total_pages":0,"total_items":0}</code></pre>
+</details>
+
+<h2>主要阅读</h2>
+<p><a href="https://loco.rs/docs/tutorials/your-first-app/">Your First App §4–5</a>（就是本课的 posts 版），再看 <a href="https://loco.rs/docs/reference/generators/">Generators &amp; field types</a> 里 scaffold 和 “Authentication on generated routes” 两节。</p>
+
+<p>有任何不清楚的，随时直接问我。</p>
+
+<nav class="next">
+<a href="0004-model-migration.html">← 第 4 课：model 和 migration</a>
+<a href="../reference/cargo-loco-commands.html">命令速查</a>
+<span>第 6 课：view 和 JSON 响应 / 校验（待写） →</span>
+</nav>
+<footer>核实环境：loco 1.2.0 / loco-rs 1.2.0 / sea-orm-cli 2.0.4 / rustc 1.99.1 / PowerShell 7.6.8（Linux）· 2026-10-25</footer>
+</body>
+</html>

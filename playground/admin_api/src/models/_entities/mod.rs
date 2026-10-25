@@ -2,5 +2,6 @@
 
 pub mod prelude;
 
+pub mod categories;
 pub mod products;
 pub mod users;

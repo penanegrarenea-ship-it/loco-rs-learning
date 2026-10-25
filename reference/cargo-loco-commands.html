@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="../assets/style.css">
 </head>
 <body>
-<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0001-loco-new.html">第 1 课</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a> · <a href="../lessons/0004-model-migration.html">第 4 课</a></header>
+<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0001-loco-new.html">第 1 课</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a> · <a href="../lessons/0004-model-migration.html">第 4 课</a> · <a href="../lessons/0005-scaffold.html">第 5 课</a></header>
 
 <h1>命令速查：<code>loco</code> 与 <code>cargo loco</code></h1>
 <p class="lede">版本：<strong>loco 1.2.0 / loco-rs 1.2.0</strong>（2026-09-22 发布）。下面每条命令都来自真实 <code>--help</code> 输出（2026-10-24，SQLite 项目 <code>admin_api</code>）。用 Postgres 或 <code>--db none</code> 的项目子命令会不同。</p>
@@ -99,11 +99,47 @@ injected: "tests/models/mod.rs"</code></pre>
 <li>只在数据库里手动改表、不写 migration：<code>db entities</code> 会照着生成字段，但下次 <code>db reset</code> 或 <code>seed --reset</code> 就没了，seed 和查询都会报 <code>no such column</code>。</li>
 </ul>
 
+<h3><code>generate scaffold</code>（第 5 课实测）</h3>
+<pre><code>cargo loco generate scaffold category name:string! description:text --no-auth</code></pre>
+<pre class="output"><code>added: "migration/src/m20261025_134358_categories.rs"      ┐
+injected: "migration/src/lib.rs"（×2）                      │ 同 generate model
+added: "tests/models/categories.rs"                        │（并已自动 migrate + entities）
+injected: "tests/models/mod.rs"                            ┘
+added: "src/controllers/categories.rs"
+injected: "src/controllers/mod.rs"
+injected: "src/app.rs"
+added: "src/dtos/categories.rs"
+injected: "src/dtos/mod.rs"</code></pre>
+<table>
+<tr><th>HTTP</th><th>路径</th><th>handler</th><th>成功</th></tr>
+<tr><td>GET</td><td><code>/api/categories?page=&amp;page_size=</code></td><td><code>list</code></td><td>200 分页信封（默认 25 条/页）</td></tr>
+<tr><td>POST</td><td><code>/api/categories</code></td><td><code>create</code></td><td>201</td></tr>
+<tr><td>GET</td><td><code>/api/categories/{id}</code></td><td><code>get_one</code></td><td>200；不存在 404 <code>{"code":"not_found",…}</code></td></tr>
+<tr><td>PUT</td><td><code>/api/categories/{id}</code></td><td><code>update</code></td><td>200（全字段）</td></tr>
+<tr><td>DELETE</td><td><code>/api/categories/{id}</code></td><td><code>remove</code></td><td>204</td></tr>
+</table>
+<ul>
+<li>1.2.0 只有 <code>--without-tz</code>、<code>--no-auth</code>。<code>--api</code> 是隐藏的空操作，<code>--html</code>/<code>--htmx</code> 报错；有 <code>frontend\</code> 时自动多生成 React 页面。</li>
+<li>不加 <code>--no-auth</code>：每个 handler 带 <code>auth::JWT</code>，匿名请求 401。</li>
+<li>没有 PATCH（405）、没有校验、没有接口测试（只有 model 测试）；controller 直接用 <code>_entities</code>，业务规则要自己挪进 <code>models\&lt;name&gt;.rs</code>。</li>
+</ul>
+<pre><code># PowerShell 发 JSON：哈希表 + ConvertTo-Json，记得 -ContentType（不带回 415）
+$base = "http://localhost:5150/api/categories"
+Invoke-RestMethod -Method Post -Uri $base -ContentType "application/json" -Body (@{ name = "Books" } | ConvertTo-Json)
+Invoke-RestMethod -Method Put  -Uri "$base/1" -ContentType "application/json" -Body (@{ name = "X"; description = "Y" } | ConvertTo-Json)
+Invoke-RestMethod -Method Delete "$base/1"
+Invoke-RestMethod "$($base)?page=2&amp;page_size=2"
+# curl.exe：JSON 先写文件，再 --data-binary "@文件"
+Set-Content -Path body.json -Value '{"name":"Books"}'
+curl.exe -s -i -X POST -H "Content-Type: application/json" --data-binary "@body.json" $base
+# Invoke-RestMethod 遇 4xx 抛异常：
+try { Invoke-RestMethod "$base/999" } catch { $_.Exception.Response.StatusCode.value__; $_.ErrorDetails.Message }</code></pre>
+
 <h3>测试</h3>
 <pre><code>cargo test --test mod requests::admin   # 集成测试只有一个目标：mod（tests\mod.rs）</code></pre>
 <p>官方 how-to 写的 <code>cargo test --test requests_notes</code> 在 1.2.0 生成的项目里不存在（实测报 <code>no test target named ...</code>）。</p>
 
-<h3>常用（第 1–4 课）</h3>
+<h3>常用（第 1–5 课）</h3>
 <p>Windows 11 PowerShell 写法（我在 Linux 上验证，输出照实）：</p>
 <pre><code>cargo loco start                                  # 默认 http://localhost:5150
 $env:PORT=5151; cargo loco start                  # 换端口（已实测）
