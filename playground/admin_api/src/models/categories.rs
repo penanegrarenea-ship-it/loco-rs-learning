@@ -26,6 +26,22 @@ impl ActiveModel {}
 
 // implement your custom finders, selectors oriented logic here
 impl Entity {
+    /// 业务规则：分类名称不能重复。更新时用 `except_id` 排除自己。
+    pub async fn ensure_name_unique(
+        db: &DatabaseConnection,
+        name: &str,
+        except_id: Option<i64>,
+    ) -> ModelResult<()> {
+        let mut query = Self::find().filter(categories::Column::Name.eq(name));
+        if let Some(id) = except_id {
+            query = query.filter(categories::Column::Id.ne(id));
+        }
+        if query.one(db).await?.is_some() {
+            return Err(ModelError::EntityAlreadyExists);
+        }
+        Ok(())
+    }
+
     /// 后台分类列表的查询规则：`q` 非空时只要名称包含它的记录，按 id 排序。
     pub fn search(q: Option<&str>) -> sea_orm::Select<Self> {
         let select = Self::find().order_by_asc(categories::Column::Id);

@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 6 课：输入校验和统一的 JSON 错误</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="course">Loco 速学 · 第 6 课 · Loco 1.2.0 · <a href="../index.html">目录</a> · <a href="../reference/cargo-loco-commands.html">命令速查</a> · <a href="../reference/axum-to-loco.html">axum→Loco</a></header>
+
+<h1>输入校验和统一的 JSON 错误</h1>
+<p class="lede">目标：修好第 5 课留下的两个问题——<code>name: ""</code> 也能 201，缺字段只回笼统的 <code>{"error":"Bad Request"}</code>。给 category 的 create/update 加校验，失败时返回带字段名的 JSON 错误；顺带让响应只带需要的字段。</p>
+
+<h2>1. 先知道三件事</h2>
+<p><strong>Loco 的主推做法：DTO 上 <code>#[derive(Validate)]</code> + 提取器 <code>JsonValidateWithMessage</code>。</strong>官方 <a href="https://loco.rs/docs/how-to/validate-requests/">Validate requests</a> 列了 6 个提取器，都在 <code>loco_rs::controller::extractor::validate</code>，其中 <code>JsonValidate</code> 和 <code>JsonValidateWithMessage</code> 直接在 <code>loco_rs::prelude</code> 里。区别只有一个：</p>
+<table>
+<tr><th>提取器</th><th>校验失败时</th></tr>
+<tr><td><code>JsonValidate&lt;T&gt;</code></td><td>400 <code>{"error":"Bad Request"}</code>，看不出哪个字段错</td></tr>
+<tr><td><code>JsonValidateWithMessage&lt;T&gt;</code></td><td>400 <code>{"errors":{"字段":[{code,message,params}]}}</code></td></tr>
+</table>
+<p>后台要给前端显示“哪个字段错了”，所以用 <code>WithMessage</code>。源码 <a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/controller/extractor/validate.rs#L261-L303"><code>extractor/validate.rs</code> 第 261–303 行</a>：先用 axum 的 <code>Json</code> 解析，再调 <code>validate()</code>，失败转成 <code>Error::Validation</code>；<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/controller/mod.rs#L185-L196"><code>controller/mod.rs</code> 第 185 行</a>把它变成 <strong>400</strong> + <code>{"errors":…}</code>。</p>
+
+<p><strong>解析失败和校验失败是两回事。</strong>JSON 都解析不了（缺必填字段、语法错、没带 <code>Content-Type</code>），在校验之前就被 axum 拒绝，Loco 只保留 axum 的状态码，body 一律是 <code>{"error":"Bad Request"}</code>（<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/controller/mod.rs#L250-L253"><code>controller/mod.rs</code> 第 250 行</a>）。这就是第 5 课 422/415 都写 “Bad Request” 的原因。下面用 <code>#[serde(default)]</code> 把“缺 name”也拉进校验。</p>
+
+<p><strong>格式校验放边界，业务规则放 model。</strong>“长度 1–50”只看这一个请求就能判断，放在 DTO 上；“名称不能和别的分类重复”要查数据库，是领域规则，放 <code>models\categories.rs</code>，返回 <code>ModelError::EntityAlreadyExists</code>，Loco 自动映射成 409（练习 3）。</p>
+
+<p>其他做法一句话：model 层还有 <code>Validatable</code> trait（<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/validation.rs#L155"><code>validation.rs</code></a>），源码注释示例在 <code>before_save</code> 里调 <code>self.validate()?</code>——我实测这样会回 <strong>500</strong>（见文末不一致处），不推荐；<code>bad_request("…")</code> 返回 400 <code>{"error":"Bad Request","description":"…"}</code>，适合单条手写判断；<code>format::render().status(…).json(…)</code> 可以回任意状态码和结构。</p>
+
+<h2>2. 动手（在 <code>playground\admin_api</code> 真跑过）</h2>
+<p>PowerShell 写法，在 <code>admin_api\</code> 根目录执行。改代码前 <code>Ctrl+C</code> 停服务。我在 Linux 版 PowerShell 7 上跑，输出照实贴。</p>
+
+<span class="label">① 改造前：先看问题</span>
+<p>用 <code>curl.exe</code> 发文件里的 JSON，<code>-w</code> 在最后打印状态码。这种写法在 Windows PowerShell 5.1 和 7 里都一样：</p>
+<pre><code>$base = "http://localhost:5150/api/categories"
+Set-Content -Path body.json -Value '{"name":""}'
+curl.exe -s -w " -&gt; %{http_code}`n" -X POST -H "Content-Type: application/json" --data-binary "@body.json" $base</code></pre>
+<table>
+<tr><th>请求体</th><th>改造前（第 5 课生成的代码）</th></tr>
+<tr><td><code>{"name":""}</code></td><td><code>201 {"id":8,"name":"","description":null,"created_at":…,"updated_at":…}</code></td></tr>
+<tr><td>name 80 个 x</td><td><code>201 {"id":9,"name":"xxxx…","description":null,…}</code></td></tr>
+<tr><td><code>{"description":"no name"}</code></td><td><code>422 {"error":"Bad Request"}</code></td></tr>
+<tr><td><code>{"name":</code>（坏 JSON）</td><td><code>400 {"error":"Bad Request"}</code></td></tr>
+</table>
+<p>空名字和超长名字都进了数据库（我事后删掉了 id 8、9）。</p>
+
+<span class="label">② DTO 加校验：<code>src\dtos\categories.rs</code></span>
+<pre><code>use ts_rs::TS;
+use validator::Validate;
+
+#[derive(serde::Serialize, serde::Deserialize, TS, Validate)]
+pub struct CreateCategory {
+    /// 没传 name 时按 "" 处理，走字段级校验，而不是笼统的 422
+    #[serde(default)]
+    #[validate(length(min = 1, max = 50, message = "name must be 1-50 characters"))]
+    pub name: String,
+    #[validate(length(max = 200, message = "description must be at most 200 characters"))]
+    pub description: Option&lt;String&gt;,
+}
+// UpdateCategory 同样加这两行 #[validate(...)] 和 #[serde(default)]</code></pre>
+<ul>
+<li><code>validator</code> 已经在生成项目的 <code>Cargo.toml</code> 里（<code>validator = { version = "0.20" }</code>），不用再加依赖。</li>
+<li><code>length</code> 按字符数算，中文一个字算 1（validator 源码 <code>chars().count()</code>）。</li>
+<li><code>Option&lt;String&gt;</code> 是 <code>None</code> 时不检查，有值才检查长度。</li>
+<li>错误信息用英文：避免 Windows 控制台显示中文 JSON 时出现编码问题。</li>
+</ul>
+
+<span class="label">③ controller 换提取器：<code>src\controllers\categories.rs</code></span>
+<pre><code>async fn create(
+    State(ctx): State&lt;AppContext&gt;,
+-   Json(params): Json&lt;CreateCategory&gt;,
++   JsonValidateWithMessage(params): JsonValidateWithMessage&lt;CreateCategory&gt;,
+) -&gt; Result&lt;Response&gt; {
+
+async fn update(
+    State(ctx): State&lt;AppContext&gt;,
+    Path(id): Path&lt;i64&gt;,
+-   Json(params): Json&lt;UpdateCategory&gt;,
++   JsonValidateWithMessage(params): JsonValidateWithMessage&lt;UpdateCategory&gt;,
+) -&gt; Result&lt;Response&gt; {</code></pre>
+<p>就这两行。<code>JsonValidateWithMessage</code> 在 <code>loco_rs::prelude::*</code> 里，不用另外 <code>use</code>。和 axum 比：它就是一个自定义 <code>FromRequest</code>，相当于你在 axum 里自己写 “先 <code>Json</code> 再 <code>validate()</code>” 的提取器。</p>
+
+<span class="label">④ 响应结构体只带需要的字段（view）</span>
+<p>这个项目有两个放响应结构体的地方：<code>src\views\</code>（<code>loco new</code> 生成，里面是 auth 的 <code>LoginResponse</code> 等）和 <code>src\dtos\</code>（scaffold 生成，带 <code>ts_rs::TS</code>）。category 的响应结构体是 <code>dtos\categories.rs</code> 里的 <code>CategoryDto</code>，就改它：后台列表不需要时间戳，删掉 <code>created_at</code>/<code>updated_at</code> 两个字段和 <code>From</code> 里对应的两行：</p>
+<pre><code>#[derive(serde::Serialize, serde::Deserialize, TS)]
+pub struct CategoryDto {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub name: String,
+    pub description: Option&lt;String&gt;,
+}
+
+impl From&lt;crate::models::_entities::categories::Model&gt; for CategoryDto {
+    fn from(m: crate::models::_entities::categories::Model) -&gt; Self {
+        Self { id: m.id, name: m.name, description: m.description }
+    }
+}</code></pre>
+<p>原理：响应里有什么字段，完全由你 <code>Json(...)</code> 的那个结构体决定；数据库 <code>Model</code> 不直接出门。顶部的 <code>use sea_orm::prelude::DateTimeWithTimeZone;</code> 不再用到，一起删掉。</p>
+
+<span class="label">⑤ 改造后：同样的请求</span>
+<pre><code>cargo build
+cargo loco start</code></pre>
+<pre><code>Set-Content -Path body.json -Value '{"name":""}'
+curl.exe -s -w " -&gt; %{http_code}`n" -X POST -H "Content-Type: application/json" --data-binary "@body.json" $base</code></pre>
+<pre class="output"><code>{"errors":{"name":[{"code":"length","message":"name must be 1-50 characters","params":{"max":50,"min":1,"value":""}}]}} -&gt; 400</code></pre>
+<pre><code>Set-Content -Path body.json -Value ('{"name":"' + ('x' * 51) + '"}')</code></pre>
+<pre class="output"><code>{"errors":{"name":[{"code":"length","message":"name must be 1-50 characters","params":{"max":50,"min":1,"value":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}]}} -&gt; 400</code></pre>
+<pre><code>Set-Content -Path body.json -Value ('{"name":"","description":"' + ('d' * 201) + '"}')</code></pre>
+<pre class="output"><code>{"errors":{"description":[{"code":"length","message":"description must be at most 200 characters","params":{"max":200,"value":"dddd……"}}],"name":[{"code":"length","message":"name must be 1-50 characters","params":{"max":50,"min":1,"value":""}}]}} -&gt; 400</code></pre>
+<table>
+<tr><th>请求体</th><th>改造前</th><th>改造后</th></tr>
+<tr><td><code>{"name":""}</code></td><td>201，存进去了</td><td>400，<code>errors.name</code></td></tr>
+<tr><td>name 51 个字符</td><td>201</td><td>400，<code>errors.name</code></td></tr>
+<tr><td>name 正好 50 个字符</td><td>201</td><td>201 <code>{"id":10,"name":"xxx…","description":null}</code></td></tr>
+<tr><td><code>{"description":"no name"}</code></td><td>422 <code>{"error":"Bad Request"}</code></td><td>400，<code>errors.name</code>（多亏 <code>#[serde(default)]</code>）</td></tr>
+<tr><td>两个字段都错</td><td>—</td><td>400，<code>errors</code> 里同时有 <code>name</code> 和 <code>description</code></td></tr>
+<tr><td>PUT <code>/1</code> <code>{"name":""}</code></td><td>—</td><td>400，<code>errors.name</code></td></tr>
+<tr><td><code>{"name":</code>（坏 JSON）</td><td>400 <code>{"error":"Bad Request"}</code></td><td>不变</td></tr>
+<tr><td>不带 <code>Content-Type</code></td><td>415 <code>{"error":"Bad Request"}</code></td><td>不变</td></tr>
+</table>
+<p>正常的请求现在只回三个字段：</p>
+<pre class="output"><code>{"name":"Toys"} -&gt; {"id":11,"name":"Toys","description":null} -&gt; 201</code></pre>
+<p>用 <code>Invoke-RestMethod</code> 时，4xx 会抛异常，在 <code>catch</code> 里读状态码和响应体：</p>
+<pre><code>try {
+    Invoke-RestMethod -Method Post -Uri $base -ContentType "application/json" -Body (@{ name = "" } | ConvertTo-Json)
+} catch {
+    $_.Exception.Response.StatusCode.value__
+    $_.ErrorDetails.Message
+}</code></pre>
+<pre class="output"><code>400
+
+{
+  "errors": {
+    "name": [
+      {
+        "code": "length",
+        "message": "name must be 1-50 characters",
+        "params": {
+          "max": 50,
+          "min": 1,
+          "value": ""
+        }
+      }
+    ]
+  }
+}</code></pre>
+<p>（这是 PowerShell 7 的显示：<code>ErrorDetails.Message</code> 里的 JSON 被排成了多行，内容和 <code>curl.exe</code> 看到的一样。）</p>
+
+<span class="label">⑥ 写一个 request 测试锁住它</span>
+<p>新建 <code>tests\requests\categories.rs</code>，并在 <code>tests\requests\mod.rs</code> 末尾加 <code>pub mod categories;</code>：</p>
+<pre><code>use admin_api::app::App;
+use loco_rs::testing::prelude::*;
+use serial_test::serial;
+
+#[tokio::test]
+#[serial]
+async fn create_rejects_empty_name_with_field_errors() {
+    request::&lt;App, _, _&gt;(|request, _ctx| async move {
+        let res = request
+            .post("/api/categories")
+            .json(&amp;serde_json::json!({ "name": "" }))
+            .await;
+        assert_eq!(res.status_code(), 400);
+
+        let body: serde_json::Value = res.json();
+        assert_eq!(body["errors"]["name"][0]["code"], "length");
+        assert_eq!(
+            body["errors"]["name"][0]["message"],
+            "name must be 1-50 characters"
+        );
+    })
+    .await;
+}</code></pre>
+<pre><code>cargo test --test mod requests::categories</code></pre>
+<pre class="output"><code>test requests::categories::create_rejects_empty_name_with_field_errors ... ok
+test requests::categories::create_rejects_duplicate_name_with_409 ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 31 filtered out; finished in 0.20s</code></pre>
+<p>第二个测试是练习 3 的答案，你做练习时先只写第一个。全部测试：<code>cargo test</code> → <code>33 passed</code>；<code>cargo fmt --check</code> 无输出。</p>
+
+<div class="note"><strong>现在有三种错误 JSON：</strong>校验失败 <code>{"errors":{…}}</code>；Loco 自己的错误 <code>{"error":"…","description":"…"}</code>（409、坏 JSON 等）；scaffold 生成的 404 <code>{"code":"not_found","message":…,"details":null}</code>（第 5 课）。前两种是框架定的。第三种是 scaffold 自己写在 controller 里的 <code>not_found()</code>，想统一可以换成 Loco 的 <code>Error::NotFound</code>（练习 4）。</div>
+
+<div class="note"><strong>文档和 1.2.0 实际不一致处</strong>
+<ul>
+<li><a href="https://loco.rs/docs/how-to/validate-requests/">Validate requests</a> §4 说解析不了的输入“also returns 400”。实测缺字段 422、没带 Content-Type 415，只有 JSON 语法错才是 400。源码按 axum 的状态码返回；<a href="https://loco.rs/docs/reference/errors/">Error model reference</a> 写的 “axum’s own rejection status (commonly 400/415/422)” 才准确。</li>
+<li>没有 <code>ModelError::ModelValidation</code> 这个名字。1.2.0 是 <code>ModelError::Validation(ModelValidationErrors)</code>，顶层还有 <code>Error::Validation</code>，两者都映射成 400 + <code>{"errors":…}</code>。</li>
+<li><code>src/validation.rs</code> 的模块注释示例：给 <code>ActiveModel</code> 实现 <code>Validatable</code>，在 <code>before_save</code> 里 <code>self.validate()?</code>。我照做后 POST <code>{"name":"A"}</code> 得到 <strong>500</strong> <code>{"error":"internal_server_error","description":"Internal Server Error"}</code>。原因是错误被塞进 <code>DbErr::Custom</code>（<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/validation.rs#L111"><code>into_db_error</code></a>），1.2.0 没有任何地方把它还原成校验错误。字段信息只出现在服务端日志里。（试完已撤回。）</li>
+</ul></div>
+
+<h2>3. 回忆题</h2>
+<div class="quiz" id="q1">
+<p class="q">换成 <code>JsonValidateWithMessage</code> 之后，POST <code>{"name":""}</code> 会得到什么？</p>
+<button data-ok="0">422，带字段错误</button>
+<button data-ok="1">400，带字段错误</button>
+<button data-ok="0">201，照常创建了</button>
+<p class="fb" aria-live="polite"></p>
+</div>
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  var fb = quiz.querySelector('.fb');
+  quiz.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      quiz.querySelectorAll('button').forEach(function (x) { x.classList.remove('right', 'wrong'); });
+      if (b.dataset.ok === '1') {
+        b.classList.add('right');
+        fb.textContent = '对。JSON 能解析，校验失败 → Error::Validation → 400 + {"errors":{"name":[…]}}。422 是 axum 解析失败（比如缺字段）时的状态码，那时还轮不到校验。';
+      } else {
+        b.classList.add('wrong');
+        fb.textContent = '不对。Loco 把校验失败统一映射成 400（controller/mod.rs 的 validation_error_response）；422 只出现在 JSON 都解析不了的时候。回看第 ⑤ 步的对比表。';
+      }
+    });
+  });
+});
+</script>
+
+<h2>4. 练习</h2>
+<div class="task">
+<ol>
+<li>在你的 <code>admin_api</code> 里做 ②–⑤，贴回改造前后 <code>{"name":""}</code> 和 <code>{"description":"no name"}</code> 两个请求的状态码和响应体。</li>
+<li>把 <code>#[serde(default)]</code> 去掉，重新请求 <code>{"description":"no name"}</code>，贴结果，用一句话解释为什么变了。然后加回来。</li>
+<li>进阶（业务规则放 model）：分类名称不能重复。在 <code>models\categories.rs</code> 的 <code>impl Entity</code> 里写 <code>ensure_name_unique(db, name, except_id)</code>，重名时返回 <code>ModelError::EntityAlreadyExists</code>；create 和 update 里各调一次（update 要排除自己）。验证：重复 POST、把别的分类 PUT 成同名、把自己 PUT 成原名，贴三个结果；再给重复 POST 写一个断言 409 的 request 测试。</li>
+<li>选做：把 controller 里 scaffold 生成的 <code>not_found("category not found")</code> 换成 Loco 的 <code>Err(Error::NotFound)</code>，请求一个不存在的 id，贴响应体，和原来的比一比。</li>
+<li>间隔复习（第 5 课）：scaffold 生成的 <code>update</code> 对应哪个 HTTP 方法？发 PATCH 会怎样？</li>
+</ol>
+</div>
+<details>
+<summary>练习 3 参考答案（我在 playground 里实测过，先自己写再看）</summary>
+<p><code>src\models\categories.rs</code>：</p>
+<pre><code>impl Entity {
+    /// 业务规则：分类名称不能重复。更新时用 `except_id` 排除自己。
+    pub async fn ensure_name_unique(
+        db: &amp;DatabaseConnection,
+        name: &amp;str,
+        except_id: Option&lt;i64&gt;,
+    ) -&gt; ModelResult&lt;()&gt; {
+        let mut query = Self::find().filter(categories::Column::Name.eq(name));
+        if let Some(id) = except_id {
+            query = query.filter(categories::Column::Id.ne(id));
+        }
+        if query.one(db).await?.is_some() {
+            return Err(ModelError::EntityAlreadyExists);
+        }
+        Ok(())
+    }
+    // …第 5 课的 search 不变
+}</code></pre>
+<p>controller：create 开头加 <code>Entity::ensure_name_unique(&amp;ctx.db, &amp;params.name, None).await?;</code>；update 在找到记录之后加 <code>Entity::ensure_name_unique(&amp;ctx.db, &amp;params.name, Some(id)).await?;</code>。<code>ModelError</code> 经 <code>?</code> 变成 <code>Error::Model</code>，Loco 映射成 409（<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/controller/mod.rs#L267-L270"><code>controller/mod.rs</code> 第 267 行</a>）。实测（已有 id 11 Toys）：</p>
+<pre><code>function Send-Json($Method, $Uri, $Data) {
+    try { Invoke-RestMethod -Method $Method -Uri $Uri -ContentType "application/json" -Body ($Data | ConvertTo-Json) }
+    catch { "$($_.Exception.Response.StatusCode.value__) $($_.ErrorDetails.Message)" }
+}
+Send-Json Post $base @{ name = "Toys" }
+Send-Json Put "$base/5" @{ name = "Toys" }
+Send-Json Put "$base/11" @{ name = "Toys"; description = "Games and puzzles" }</code></pre>
+<pre class="output"><code>409
+{
+  "error": "conflict",
+  "description": "Resource already exists"
+}
+409
+{
+  "error": "conflict",
+  "description": "Resource already exists"
+}
+
+id name description
+-- ---- -----------
+11 Toys Games and puzzles</code></pre>
+<p>request 测试 <code>create_rejects_duplicate_name_with_409</code>：先 POST <code>Books</code> 断言 201，再 POST 一次断言 409 且 <code>body["error"] == "conflict"</code>。注意这只是应用层检查：两个请求同时到达仍可能都通过。要彻底防住，还要在数据库上加唯一索引（字段写成 <code>name:string^</code> 生成的就是唯一列），那是 migration 的事。</p>
+</details>
+
+<h2>主要阅读</h2>
+<p><a href="https://loco.rs/docs/how-to/validate-requests/">Validate requests</a>（注意 §4 的状态码说法），再看 <a href="https://loco.rs/docs/reference/errors/">Error model reference</a> 里每种错误对应的状态码和 JSON。</p>
+
+<p>有任何不清楚的，随时直接问我。</p>
+
+<nav class="next">
+<a href="0005-scaffold.html">← 第 5 课：scaffold 一条命令生成 CRUD</a>
+<a href="../reference/cargo-loco-commands.html">命令速查</a>
+<span>第 7 课：auth 和 JWT 保护后台接口（待写） →</span>
+</nav>
+<footer>核实环境：loco 1.2.0 / loco-rs 1.2.0 / validator 0.20 / rustc 1.99.1 / PowerShell 7.6.8（Linux）· 2026-10-27</footer>
+</body>
+</html>

@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="../assets/style.css">
 </head>
 <body>
-<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0001-loco-new.html">第 1 课</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a> · <a href="../lessons/0004-model-migration.html">第 4 课</a> · <a href="../lessons/0005-scaffold.html">第 5 课</a></header>
+<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0001-loco-new.html">第 1 课</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a> · <a href="../lessons/0004-model-migration.html">第 4 课</a> · <a href="../lessons/0005-scaffold.html">第 5 课</a> · <a href="../lessons/0006-validation-json.html">第 6 课</a></header>
 
 <h1>命令速查：<code>loco</code> 与 <code>cargo loco</code></h1>
 <p class="lede">版本：<strong>loco 1.2.0 / loco-rs 1.2.0</strong>（2026-09-22 发布）。下面每条命令都来自真实 <code>--help</code> 输出（2026-10-24，SQLite 项目 <code>admin_api</code>）。用 Postgres 或 <code>--db none</code> 的项目子命令会不同。</p>
@@ -135,11 +135,29 @@ curl.exe -s -i -X POST -H "Content-Type: application/json" --data-binary "@body.
 # Invoke-RestMethod 遇 4xx 抛异常：
 try { Invoke-RestMethod "$base/999" } catch { $_.Exception.Response.StatusCode.value__; $_.ErrorDetails.Message }</code></pre>
 
+<h3>校验与错误速查（第 6 课实测）</h3>
+<pre><code># DTO：#[derive(Validate)] + #[validate(length(min = 1, max = 50, message = "..."))]
+# handler：JsonValidateWithMessage(params): JsonValidateWithMessage&lt;CreateCategory&gt;
+# PowerShell 看 4xx 的状态码和响应体（5.1 / 7 通用）：
+try { Invoke-RestMethod -Method Post -Uri $base -ContentType "application/json" -Body (@{ name = "" } | ConvertTo-Json) }
+catch { $_.Exception.Response.StatusCode.value__; $_.ErrorDetails.Message }
+curl.exe -s -w " -&gt; %{http_code}`n" -X POST -H "Content-Type: application/json" --data-binary "@body.json" $base</code></pre>
+<table>
+<tr><th>情况</th><th>状态码</th><th>响应体</th></tr>
+<tr><td>校验失败（<code>JsonValidateWithMessage</code>）</td><td>400</td><td><code>{"errors":{"name":[{"code":"length","message":…,"params":…}]}}</code></td></tr>
+<tr><td>校验失败（<code>JsonValidate</code>）</td><td>400</td><td><code>{"error":"Bad Request"}</code></td></tr>
+<tr><td>缺必填字段（axum 解析失败）</td><td>422</td><td><code>{"error":"Bad Request"}</code></td></tr>
+<tr><td>JSON 语法错</td><td>400</td><td><code>{"error":"Bad Request"}</code></td></tr>
+<tr><td>没带 <code>Content-Type: application/json</code></td><td>415</td><td><code>{"error":"Bad Request"}</code></td></tr>
+<tr><td><code>ModelError::EntityAlreadyExists</code></td><td>409</td><td><code>{"error":"conflict","description":"Resource already exists"}</code></td></tr>
+<tr><td><code>before_save</code> 里 <code>validate()?</code></td><td>500</td><td><code>{"error":"internal_server_error",…}</code>（别这么用）</td></tr>
+</table>
+
 <h3>测试</h3>
 <pre><code>cargo test --test mod requests::admin   # 集成测试只有一个目标：mod（tests\mod.rs）</code></pre>
 <p>官方 how-to 写的 <code>cargo test --test requests_notes</code> 在 1.2.0 生成的项目里不存在（实测报 <code>no test target named ...</code>）。</p>
 
-<h3>常用（第 1–5 课）</h3>
+<h3>常用（第 1–6 课）</h3>
 <p>Windows 11 PowerShell 写法（我在 Linux 上验证，输出照实）：</p>
 <pre><code>cargo loco start                                  # 默认 http://localhost:5150
 $env:PORT=5151; cargo loco start                  # 换端口（已实测）

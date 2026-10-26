@@ -1,5 +1,5 @@
-use sea_orm::prelude::DateTimeWithTimeZone;
 use ts_rs::TS;
+use validator::Validate;
 
 #[derive(serde::Serialize, serde::Deserialize, TS)]
 pub struct CategoryDto {
@@ -7,10 +7,6 @@ pub struct CategoryDto {
     pub id: i64,
     pub name: String,
     pub description: Option<String>,
-    #[ts(type = "string")]
-    pub created_at: DateTimeWithTimeZone,
-    #[ts(type = "string")]
-    pub updated_at: DateTimeWithTimeZone,
 }
 
 impl From<crate::models::_entities::categories::Model> for CategoryDto {
@@ -19,20 +15,26 @@ impl From<crate::models::_entities::categories::Model> for CategoryDto {
             id: m.id,
             name: m.name,
             description: m.description,
-            created_at: m.created_at,
-            updated_at: m.updated_at,
         }
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, TS)]
+#[derive(serde::Serialize, serde::Deserialize, TS, Validate)]
 pub struct CreateCategory {
+    /// 没传 name 时按 "" 处理，走字段级校验，而不是笼统的 422
+    #[serde(default)]
+    #[validate(length(min = 1, max = 50, message = "name must be 1-50 characters"))]
     pub name: String,
+    #[validate(length(max = 200, message = "description must be at most 200 characters"))]
     pub description: Option<String>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, TS)]
+#[derive(serde::Serialize, serde::Deserialize, TS, Validate)]
 pub struct UpdateCategory {
+    /// 没传 name 时按 "" 处理，走字段级校验，而不是笼统的 422
+    #[serde(default)]
+    #[validate(length(min = 1, max = 50, message = "name must be 1-50 characters"))]
     pub name: String,
+    #[validate(length(max = 200, message = "description must be at most 200 characters"))]
     pub description: Option<String>,
 }

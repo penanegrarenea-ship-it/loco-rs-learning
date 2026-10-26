@@ -48,6 +48,15 @@
 <tr><td><code>#[debug_handler]</code></td><td>prelude 里有，生成代码就在用</td></tr>
 </table>
 
+<h2>校验和错误（第 6 课）</h2>
+<table>
+<tr><th>axum</th><th>Loco</th></tr>
+<tr><td>自己写 “<code>Json</code> 再 <code>validate()</code>” 的 <code>FromRequest</code></td><td>prelude 里现成的 <code>JsonValidateWithMessage&lt;T&gt;</code>（T 上 <code>#[derive(Validate)]</code>）：失败 400 <code>{"errors":{"字段":[{code,message,params}]}}</code>；<code>JsonValidate&lt;T&gt;</code> 只回 400 <code>{"error":"Bad Request"}</code></td></tr>
+<tr><td><code>Json</code> 拒绝：400/415/422 + 纯文本原因</td><td>状态码保留，body 统一成 <code>{"error":"Bad Request"}</code>，原因只在 debug 日志</td></tr>
+<tr><td>自定义错误类型 <code>impl IntoResponse</code></td><td>返回 <code>loco_rs::Error</code>：<code>bad_request("…")</code> → 400，<code>Error::NotFound</code> → 404，<code>ModelError::EntityAlreadyExists</code> → 409，<code>Error::CustomError(status, ErrorDetail)</code> → 任意</td></tr>
+<tr><td>响应结构体 + <code>Json(dto)</code></td><td>一样；scaffold 的在 <code>src\dtos\</code>，<code>loco new</code> 的在 <code>src\views\</code>。不想暴露的字段不放进结构体就行</td></tr>
+</table>
+
 <h2>中间件</h2>
 <table>
 <tr><th>axum</th><th>Loco</th></tr>

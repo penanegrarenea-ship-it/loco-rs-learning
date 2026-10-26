@@ -54,8 +54,9 @@ async fn get_one(State(ctx): State<AppContext>, Path(id): Path<i64>) -> Result<R
 #[debug_handler]
 async fn create(
     State(ctx): State<AppContext>,
-    Json(params): Json<CreateCategory>,
+    JsonValidateWithMessage(params): JsonValidateWithMessage<CreateCategory>,
 ) -> Result<Response> {
+    Entity::ensure_name_unique(&ctx.db, &params.name, None).await?;
     let item = ActiveModel {
         name: Set(params.name),
         description: Set(params.description),
@@ -70,11 +71,12 @@ async fn create(
 async fn update(
     State(ctx): State<AppContext>,
     Path(id): Path<i64>,
-    Json(params): Json<UpdateCategory>,
+    JsonValidateWithMessage(params): JsonValidateWithMessage<UpdateCategory>,
 ) -> Result<Response> {
     let Some(model) = Entity::find_by_id(id).one(&ctx.db).await? else {
         return Ok(not_found("category not found"));
     };
+    Entity::ensure_name_unique(&ctx.db, &params.name, Some(id)).await?;
 
     let mut item = model.into_active_model();
     item.name = Set(params.name);
