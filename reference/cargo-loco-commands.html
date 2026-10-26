@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="../assets/style.css">
 </head>
 <body>
-<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0001-loco-new.html">第 1 课</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a> · <a href="../lessons/0004-model-migration.html">第 4 课</a> · <a href="../lessons/0005-scaffold.html">第 5 课</a> · <a href="../lessons/0006-validation-json.html">第 6 课</a></header>
+<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0001-loco-new.html">第 1 课</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a> · <a href="../lessons/0004-model-migration.html">第 4 课</a> · <a href="../lessons/0005-scaffold.html">第 5 课</a> · <a href="../lessons/0006-validation-json.html">第 6 课</a> · <a href="../lessons/0007-auth-jwt.html">第 7 课</a></header>
 
 <h1>命令速查：<code>loco</code> 与 <code>cargo loco</code></h1>
 <p class="lede">版本：<strong>loco 1.2.0 / loco-rs 1.2.0</strong>（2026-09-22 发布）。下面每条命令都来自真实 <code>--help</code> 输出（2026-10-24，SQLite 项目 <code>admin_api</code>）。用 Postgres 或 <code>--db none</code> 的项目子命令会不同。</p>
@@ -153,11 +153,38 @@ curl.exe -s -w " -&gt; %{http_code}`n" -X POST -H "Content-Type: application/jso
 <tr><td><code>before_save</code> 里 <code>validate()?</code></td><td>500</td><td><code>{"error":"internal_server_error",…}</code>（别这么用）</td></tr>
 </table>
 
+<h3>auth / JWT 速查（第 7 课实测）</h3>
+<pre><code>$api = "http://localhost:5150/api"
+# 注册（200，响应体 null；开发环境没 SMTP 时邮件在后台失败，只记日志）
+Invoke-RestMethod -Method Post -Uri "$api/auth/register" -ContentType "application/json" `
+    -Body (@{ name = "Admin"; email = "admin@example.com"; password = "S3cret-pass" } | ConvertTo-Json)
+# 登录，存 token（不验证邮箱也能登，is_verified : False）
+$token = (Invoke-RestMethod -Method Post -Uri "$api/auth/login" -ContentType "application/json" `
+    -Body (@{ email = "admin@example.com"; password = "S3cret-pass" } | ConvertTo-Json)).token
+$headers = @{ Authorization = "Bearer $token" }
+Invoke-RestMethod "$api/auth/current" -Headers $headers          # pid / name / email
+curl.exe -s -w " -&gt; %{http_code}`n" -H "Authorization: Bearer $token" "$api/categories"
+# 没收到验证邮件时找验证 token（--from 别省，否则覆盖 src\fixtures\）
+cargo loco db seed --dump-tables users --from tmp_dump
+# 生产 secret：必须是 base64，从环境变量读（PowerShell 7）
+$env:JWT_SECRET = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(48))</code></pre>
+<table>
+<tr><th>写法 / 情况</th><th>结果</th></tr>
+<tr><td>handler 参数 <code>_auth: auth::JWT</code></td><td>只验签名和 <code>exp</code>，不查库；拿到 <code>auth.claims.pid</code></td></tr>
+<tr><td><code>users::Model::find_by_pid(&amp;ctx.db, &amp;auth.claims.pid).await?</code></td><td>拿到用户；用户不在 → 404</td></tr>
+<tr><td><code>auth: auth::JWTWithUser&lt;users::Model&gt;</code></td><td>自动查用户，<code>auth.user</code>；用户不在 → 401</td></tr>
+<tr><td>没带 token / token 乱写 / 过期 / 放在 <code>?token=</code>（默认只看 Bearer）</td><td>401 <code>{"error":"unauthorized","description":"You do not have permission to access this resource"}</code></td></tr>
+<tr><td><code>auth.jwt.expiration</code></td><td>秒，默认 604800（7 天），无宽限</td></tr>
+<tr><td><code>auth.jwt.location</code></td><td>不写 = Bearer 头；<code>from: Cookie/Query</code> + <code>name:</code>；列表按顺序试</td></tr>
+<tr><td>生产 <code>secret: &lt;%= get_env(name="JWT_SECRET") %&gt;</code></td><td>没设变量 → 启动失败 <code>environment variable `JWT_SECRET` not found…</code></td></tr>
+</table>
+<p>测试里带 token：<code>let user = prepare_data::init_user_login(&amp;request, &amp;ctx).await;</code>，<code>let (k, v) = prepare_data::auth_header(&amp;user.token);</code>，<code>request.get(…).add_header(k, v)</code>。</p>
+
 <h3>测试</h3>
 <pre><code>cargo test --test mod requests::admin   # 集成测试只有一个目标：mod（tests\mod.rs）</code></pre>
 <p>官方 how-to 写的 <code>cargo test --test requests_notes</code> 在 1.2.0 生成的项目里不存在（实测报 <code>no test target named ...</code>）。</p>
 
-<h3>常用（第 1–6 课）</h3>
+<h3>常用（第 1–7 课）</h3>
 <p>Windows 11 PowerShell 写法（我在 Linux 上验证，输出照实）：</p>
 <pre><code>cargo loco start                                  # 默认 http://localhost:5150
 $env:PORT=5151; cargo loco start                  # 换端口（已实测）

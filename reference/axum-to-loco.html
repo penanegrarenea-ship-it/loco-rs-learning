@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="../assets/style.css">
 </head>
 <body>
-<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a></header>
+<header class="course">Loco 速学 · 参考 · <a href="../index.html">目录</a> · <a href="../lessons/0002-structure-app-rs.html">第 2 课</a> · <a href="../lessons/0007-auth-jwt.html">第 7 课</a></header>
 
 <h1>axum → Loco 对照</h1>
 <p class="lede">Loco 1.2.0 基于 axum 0.8。每行都对照过 loco-rs 1.2.0 源码或生成项目；出处在表下。</p>
@@ -55,6 +55,17 @@
 <tr><td><code>Json</code> 拒绝：400/415/422 + 纯文本原因</td><td>状态码保留，body 统一成 <code>{"error":"Bad Request"}</code>，原因只在 debug 日志</td></tr>
 <tr><td>自定义错误类型 <code>impl IntoResponse</code></td><td>返回 <code>loco_rs::Error</code>：<code>bad_request("…")</code> → 400，<code>Error::NotFound</code> → 404，<code>ModelError::EntityAlreadyExists</code> → 409，<code>Error::CustomError(status, ErrorDetail)</code> → 任意</td></tr>
 <tr><td>响应结构体 + <code>Json(dto)</code></td><td>一样；scaffold 的在 <code>src\dtos\</code>，<code>loco new</code> 的在 <code>src\views\</code>。不想暴露的字段不放进结构体就行</td></tr>
+</table>
+
+<h2>认证 JWT（第 7 课）</h2>
+<table>
+<tr><th>axum</th><th>Loco</th></tr>
+<tr><td>自己写 <code>FromRequestParts</code>：读 <code>Authorization</code> 头、<code>jsonwebtoken::decode</code>、失败返回 401</td><td>prelude 里现成的 <code>auth::JWT</code>，handler 加一个参数就行；token 位置由 <code>auth.jwt.location</code> 配（Bearer / Cookie / Query）</td></tr>
+<tr><td>claims 结构体自己定义</td><td><code>UserClaims { pid, exp, claims }</code>，<code>pid</code> 是 users 表的 UUID</td></tr>
+<tr><td>提取器里顺便查用户</td><td><code>auth::JWTWithUser&lt;users::Model&gt;</code>（查不到 401），或 handler 里 <code>users::Model::find_by_pid</code>（查不到 404）</td></tr>
+<tr><td><code>Option&lt;Claims&gt;</code> 做可选登录</td><td><code>Option&lt;auth::JWT&gt;</code> 同样支持</td></tr>
+<tr><td>密钥放 <code>std::env::var</code></td><td>YAML 里写 <code>&lt;%= get_env(name="JWT_SECRET") %&gt;</code>，必须是 base64，HS512</td></tr>
+<tr><td>注册/登录接口自己写</td><td><code>loco new</code> 已生成 <code>/api/auth/*</code> 全套</td></tr>
 </table>
 
 <h2>中间件</h2>

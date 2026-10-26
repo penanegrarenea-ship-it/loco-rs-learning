@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 7 课：用内置 JWT auth 保护后台接口</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="course">Loco 速学 · 第 7 课 · Loco 1.2.0 · <a href="../index.html">目录</a> · <a href="../reference/cargo-loco-commands.html">命令速查</a> · <a href="../reference/axum-to-loco.html">axum→Loco</a></header>
+
+<h1>用内置 JWT auth 保护后台接口</h1>
+<p class="lede">目标：现在谁都能调 <code>/api/categories</code> 增删改。先把 Loco 自带的注册/登录流程走一遍，拿到 token；再给 categories 的 handler 加一个 <code>auth::JWT</code> 参数，不带 token 就 401。最后把第 6 课的测试改成带 token。</p>
+
+<h2>1. 先知道三件事</h2>
+<p><strong>auth 是现成的，不用生成。</strong><code>loco new --db sqlite</code> 生成的项目已经有 <code>users</code> 表、<code>src\controllers\auth.rs</code> 和 <code>src\models\users.rs</code>。路由前缀 <code>/api/auth</code>，跟本课有关的四个：</p>
+<table>
+<tr><th>路由</th><th>作用</th></tr>
+<tr><td><code>POST /api/auth/register</code></td><td>注册，生成邮箱验证 token，发欢迎邮件</td></tr>
+<tr><td><code>GET /api/auth/verify/{token}</code></td><td>用邮件里的 token 验证邮箱</td></tr>
+<tr><td><code>POST /api/auth/login</code></td><td>邮箱 + 密码换 JWT</td></tr>
+<tr><td><code>GET /api/auth/current</code></td><td>带 JWT 查“我是谁”</td></tr>
+</table>
+<p>（另外还有 forgot、reset、magic-link、resend-verification-mail，本课不讲。<code>cargo loco routes</code> 能看到全部。）</p>
+
+<p><strong><code>auth::JWT</code> 就是一个 axum 提取器。</strong>handler 参数里写上它，axum 在调用 handler 之前先执行它（<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/controller/extractor/auth.rs#L101-L121"><code>controller/extractor/auth.rs</code> 第 101 行</a>）：</p>
+<ol>
+<li>按配置 <code>auth.jwt.location</code> 找 token。不配就是请求头 <code>Authorization: Bearer &lt;token&gt;</code>（第 45 行 <code>TOKEN_PREFIX = "Bearer "</code>）。也可以配成 Cookie 或 Query 参数，或者写一个列表按顺序试（<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/controller/extractor/auth.rs#L203">第 203 行 <code>extract_token</code></a>）。</li>
+<li>用 <code>auth.jwt.secret</code> 校验签名和过期时间。算法 HS512，过期没有宽限（<code>leeway = 0</code>，<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/auth/jwt.rs#L132-L141"><code>auth/jwt.rs</code> 第 132 行</a>）。</li>
+<li>成功 → handler 拿到 <code>auth.claims</code>；任何一步失败 → <code>Error::Unauthorized</code> → 401 <code>{"error":"unauthorized","description":"You do not have permission to access this resource"}</code>（<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/controller/mod.rs#L227-L236"><code>controller/mod.rs</code> 第 227 行</a>）。具体原因只写进服务端日志，不告诉客户端。</li>
+</ol>
+
+<p><strong>token 里只有 <code>pid</code> 和 <code>exp</code>。</strong><code>UserClaims { pid: String, exp: u64, claims: Map }</code>（<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/auth/jwt.rs#L43-L48"><code>auth/jwt.rs</code> 第 43 行</a>）。<code>pid</code> 是 users 表里的 UUID 列，不是自增 id。要拿到完整用户，自己查一次：<code>users::Model::find_by_pid(&amp;ctx.db, &amp;auth.claims.pid)</code>——内置的 <code>/api/auth/current</code> 就是这么写的。所以 <code>auth::JWT</code> <strong>不查数据库</strong>，只验签名和过期（下面 ⑤ 会看到这意味着什么）。</p>
+
+<h2>2. 动手（在 <code>playground\admin_api</code> 真跑过）</h2>
+<p>PowerShell 写法，在 <code>admin_api\</code> 根目录执行，<code>cargo loco start</code> 开着。我在 Linux 版 PowerShell 7 上跑，输出照实贴，token 截断显示。</p>
+
+<span class="label">① 注册：开发环境的邮件去哪了</span>
+<pre><code>$api = "http://localhost:5150/api"
+$body = @{ name = "Admin"; email = "admin@example.com"; password = "S3cret-pass" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$api/auth/register" -ContentType "application/json" -Body $body | ConvertTo-Json -Compress</code></pre>
+<pre class="output"><code>null</code></pre>
+<p>状态码 200，响应体就是 <code>null</code>（controller 里 <code>format::json(())</code>，<code>()</code> 序列化出来是 <code>null</code>）。不管邮箱是否已注册，都回一样的结果，免得别人用它探测哪些邮箱注册过。服务端日志里有两行 ERROR：</p>
+<pre class="output"><code>ERROR loco_rs::mailer: mailer error err="Error sending email (smtp): 'Connection error: Connection refused (os error 111)'"
+ERROR loco_rs::bgworker: worker failed to perform job err="Error sending email (smtp): 'Connection error: Connection refused (os error 111)'"</code></pre>
+<p>原因：<code>config\development.yaml</code> 的 <code>mailer.smtp</code> 默认连 <code>localhost:1025</code>，本机没有 SMTP 服务。欢迎邮件是交给后台 worker 发的（开发环境 <code>workers.mode: BackgroundAsync</code>），所以发信失败不影响注册本身：用户已经写进数据库，<code>email_verification_token</code> 也生成了。想真的收到邮件，可以在 1025 端口跑一个本地邮件捕获工具（配置文件注释里提到 mailpit）；想连日志里的 ERROR 也不要，就在 <code>mailer:</code> 下加 <code>stub: true</code>（<code>config\test.yaml</code> 就是这么配的）。</p>
+
+<span class="label">② 登录：不验证邮箱也能登</span>
+<pre><code>$login = Invoke-RestMethod -Method Post -Uri "$api/auth/login" -ContentType "application/json" `
+    -Body (@{ email = "admin@example.com"; password = "S3cret-pass" } | ConvertTo-Json)
+$token = $login.token
+$login</code></pre>
+<pre class="output"><code>token       : eyJ0eXAiOiJKV1QiLCJh...（共 208 个字符，这里截断）
+pid         : 12e49e66-14b1-4c8e-88bf-db86f2d4685f
+name        : Admin
+is_verified : False</code></pre>
+<p><code>is_verified : False</code>，照样拿到了 token。看 <code>auth.rs</code> 的 <code>login</code>：只校验密码，不看 <code>email_verified_at</code>。要“没验证邮箱不让用”，得你自己在 handler 里查 <code>user.email_verified_at.is_some()</code>（官方 saas-with-auth 教程最后一节也这么说）。密码错时：</p>
+<pre class="output"><code>401
+{
+  "error": "unauthorized",
+  "description": "You do not have permission to access this resource"
+}</code></pre>
+
+<span class="label">③ 带 token 调 <code>/api/auth/current</code></span>
+<pre><code>$headers = @{ Authorization = "Bearer $token" }
+Invoke-RestMethod "$api/auth/current" -Headers $headers</code></pre>
+<pre class="output"><code>pid                                  name  email
+---                                  ----  -----
+12e49e66-14b1-4c8e-88bf-db86f2d4685f Admin admin@example.com</code></pre>
+<p>不带 token、带一个乱写的 token、把 token 放到 <code>?token=</code> 查询参数里（默认只看 Bearer 头），三种都是 401，响应体同上。token 中间那段只是 base64url 编码，不是加密，谁都能解开看：</p>
+<pre><code>$part = $token.Split('.')[1].Replace('-', '+').Replace('_', '/')
+$part = $part.PadRight($part.Length + (4 - $part.Length % 4) % 4, '=')
+[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($part))</code></pre>
+<pre class="output"><code>{"pid":"12e49e66-14b1-4c8e-88bf-db86f2d4685f","exp":1793641790}</code></pre>
+<p><code>exp</code> 是 Unix 时间戳，等于签发时刻 + <code>auth.jwt.expiration</code>（604800 秒 = 7 天）。头部是 <code>{"typ":"JWT","alg":"HS512"}</code>。所以别往 claims 里放机密信息。</p>
+
+<span class="label">④（可选）验证邮箱：没收到邮件，token 从哪拿</span>
+<p>验证 token 只在邮件里和数据库里。没开邮件捕获的话，用 Loco 自带的 <code>db seed --dump-tables</code> 把 users 表导出成 YAML，找到它：</p>
+<pre><code>cargo loco db seed --dump-tables users --from tmp_dump
+$hit = Select-String -Path tmp_dump\users.yaml -Pattern 'email: admin@example.com' -Context 0,2
+$vtoken = ($hit.Context.PostContext[1] -split ': ')[1]
+Remove-Item -Recurse tmp_dump      # 导出文件里有密码哈希，用完删掉
+curl.exe -s -w " -&gt; %{http_code}`n" "$api/auth/verify/$vtoken"</code></pre>
+<pre class="output"><code>null -&gt; 200</code></pre>
+<ul>
+<li><code>--from tmp_dump</code> 指定导出目录。不指定的话会写进 <code>src\fixtures\</code>，覆盖第 4 课的 fixture。</li>
+<li>导出的键按字母排序，<code>email</code> 往下第 2 行就是 <code>email_verification_token</code>，所以 <code>-Context 0,2</code> 取 <code>PostContext[1]</code>。</li>
+<li>验证成功后 token 被清空（<code>users::ActiveModel::verified</code> 把它设成 <code>None</code>），同一个 token 再用一次就是 401，乱写的 token 也是 401。再登录一次，<code>is_verified</code> 变成 <code>True</code>。</li>
+</ul>
+
+<span class="label">⑤ 保护 <code>/api/categories</code>：<code>src\controllers\categories.rs</code></span>
+<p>每个 handler 加一个参数。只需要“已登录”的，用 <code>_auth</code>（前缀下划线表示不用它的值，只要它的检查）：</p>
+<pre><code>async fn list(
++   _auth: auth::JWT,
+    State(ctx): State&lt;AppContext&gt;,
+    Query(filter): Query&lt;ListFilter&gt;,
+) -&gt; Result&lt;Response&gt; {
+// get_one、create、update 一样，各加一行 _auth: auth::JWT,</code></pre>
+<p>需要知道“是谁在操作”的，用 claims 里的 pid 查用户。以删除为例，顺手记一条日志：</p>
+<pre><code>use crate::models::{
+    _entities::categories::{ActiveModel, Entity},
+    users,
+};
+
+async fn remove(
+    auth: auth::JWT,
+    State(ctx): State&lt;AppContext&gt;,
+    Path(id): Path&lt;i64&gt;,
+) -&gt; Result&lt;Response&gt; {
+    // token 里只有 pid；要知道“是谁”，用 pid 查 users 表
+    let user = users::Model::find_by_pid(&amp;ctx.db, &amp;auth.claims.pid).await?;
+    let Some(model) = Entity::find_by_id(id).one(&amp;ctx.db).await? else {
+        return Ok(not_found("category not found"));
+    };
+    tracing::info!(category_id = id, by = %user.email, "category deleted");
+
+    model.into_active_model().delete(&amp;ctx.db).await?;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
+}</code></pre>
+<p><code>auth</code> 模块在 <code>loco_rs::prelude::*</code> 里，不用另外 <code>use</code>。这和 scaffold 不带 <code>--no-auth</code> 时生成的写法一样（第 5 课用了 <code>--no-auth</code>，现在手动补上）。<code>cargo build</code>、<code>cargo loco start</code> 之后：</p>
+<pre><code>curl.exe -s -w " -&gt; %{http_code}`n" "$api/categories?page_size=2"
+curl.exe -s -w " -&gt; %{http_code}`n" -H "Authorization: Bearer $token" "$api/categories?page_size=2"</code></pre>
+<pre class="output"><code>{"error":"unauthorized","description":"You do not have permission to access this resource"} -&gt; 401
+{"items":[{"id":1,"name":"Electronics &amp; Gadgets","description":"Everything with a plug"},{"id":5,"name":"Books","description":null}],"page":1,"page_size":2,"total_pages":3,"total_items":5} -&gt; 200</code></pre>
+<p>带 token 新建再删除：</p>
+<pre><code>$c = Invoke-RestMethod -Method Post -Uri "$api/categories" -Headers $headers -ContentType "application/json" -Body (@{ name = "Temp" } | ConvertTo-Json)
+curl.exe -s -o NUL -w "%{http_code}`n" -X DELETE -H "Authorization: Bearer $token" "$api/categories/$($c.id)"</code></pre>
+<pre class="output"><code>204</code></pre>
+<p>服务端日志：</p>
+<pre class="output"><code>INFO http-request: admin_api::controllers::categories: category deleted category_id=12 by=admin@example.com http.method=DELETE http.uri=/api/categories/12 …</code></pre>
+
+<div class="note"><strong>用户被删了，token 还能用吗？</strong>我注册了一个临时用户，登录拿到 token，然后直接从数据库删掉这个用户，再用这个 token 请求：
+<ul>
+<li><code>GET /api/categories</code>（只有 <code>_auth: auth::JWT</code>）→ <strong>200</strong>。签名对、没过期就放行，不查库。</li>
+<li><code>DELETE /api/categories/999</code> 和 <code>GET /api/auth/current</code>（调了 <code>find_by_pid</code>）→ <strong>404</strong> <code>{"error":"not_found","description":"Resource was not found"}</code>。<code>?</code> 把 <code>ModelError::EntityNotFound</code> 映射成 404。</li>
+</ul>
+如果想要“用户不在了就 401”，用另一个提取器 <code>auth::JWTWithUser&lt;users::Model&gt;</code>：它会顺便按 pid 查用户，查不到返回 401（<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/controller/extractor/auth.rs#L52-L96"><code>extractor/auth.rs</code> 第 52–96 行</a>），handler 里直接用 <code>auth.user</code>。</div>
+
+<span class="label">⑥ <code>auth.jwt</code> 配置：secret 和过期时间</span>
+<pre><code># config\development.yaml（生成时带了一个随机 secret，这里不贴）
+auth:
+  jwt:
+    secret: &lt;生成的随机串&gt;
+    expiration: 604800 # 7 days
+    # location:            # 不写 = Authorization: Bearer
+    #   from: Cookie       # Bearer / Cookie / Query；Cookie 和 Query 要写 name
+    #   name: auth_token</code></pre>
+<ul>
+<li><strong><code>expiration</code></strong> 单位是秒。改成 <code>5</code> 重启，登录后等 7 秒再请求，401，日志里是 <code>JWT validation error: ExpiredSignature</code>（我试完改回去了）。Loco 的登录只发一个 token，没有 refresh token，过期就重新登录。</li>
+<li><strong><code>secret</code> 必须是合法的 base64</strong>：签名和验签都用 <code>from_base64_secret</code>（<a href="https://github.com/loco-rs/loco/blob/v1.2.0/src/auth/jwt.rs#L113"><code>auth/jwt.rs</code> 第 113、138 行</a>）。</li>
+<li><strong>三个环境的 secret 各不相同</strong>，test 里的不能拿去签 development 的 token。</li>
+<li><strong>生产环境必须从环境变量读，不能提交到仓库里。</strong>谁拿到 secret 谁就能给任何 pid 签 token。配置文件是 Tera 模板，生成的 <code>config\production.yaml</code> 已经这样写：
+<pre><code>auth:
+  jwt:
+    secret: &lt;%= get_env(name="JWT_SECRET") %&gt;
+    expiration: 604800 # 7 days</code></pre>
+没写 <code>default</code>，变量没设就启动失败。我在生产配置下没设 <code>JWT_SECRET</code>（其他变量填了假值）跑 <code>cargo loco doctor</code>，报 <code>environment variable `JWT_SECRET` not found and no `default` was given</code>。PowerShell 7 里生成一个随机 base64 串并设置（仅当前窗口有效）：
+<pre><code>$env:JWT_SECRET = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(48))</code></pre>
+（Windows PowerShell 5.1 没有这个静态 <code>GetBytes</code> 方法，用 PowerShell 7。）</li>
+</ul>
+
+<span class="label">⑦ 测试：第 6 课的测试现在全挂了</span>
+<p>加上 auth 之后跑 <code>cargo test</code>，第 6 课的两个测试都失败了：它们没带 token，拿到的是 401。项目自带 <code>tests\requests\prepare_data.rs</code>：<code>init_user_login(&amp;request, &amp;ctx)</code> 注册并登录一个测试用户，返回带 <code>token</code> 的 <code>LoggedInUser</code>；<code>auth_header(&amp;token)</code> 返回 <code>Authorization: Bearer …</code> 这对头。改成这样：</p>
+<pre><code>use super::prepare_data;
+
+#[tokio::test]
+#[serial]
+async fn list_without_token_is_401() {
+    request::&lt;App, _, _&gt;(|request, _ctx| async move {
+        let res = request.get("/api/categories").await;
+        assert_eq!(res.status_code(), 401);
+
+        let body: serde_json::Value = res.json();
+        assert_eq!(body["error"], "unauthorized");
+    })
+    .await;
+}
+
+#[tokio::test]
+#[serial]
+async fn create_rejects_empty_name_with_field_errors() {
+    request::&lt;App, _, _&gt;(|request, ctx| async move {
+        let user = prepare_data::init_user_login(&amp;request, &amp;ctx).await;
+        let (key, value) = prepare_data::auth_header(&amp;user.token);
+
+        let res = request
+            .post("/api/categories")
+            .add_header(key, value)
+            .json(&amp;serde_json::json!({ "name": "" }))
+            .await;
+        assert_eq!(res.status_code(), 400);
+        // …断言 errors.name 同第 6 课
+    })
+    .await;
+}</code></pre>
+<p>注意三点：闭包参数从 <code>_ctx</code> 改成 <code>ctx</code>，因为 <code>init_user_login</code> 要用它查库；同一个测试里要发两次请求时，用 <code>key.clone(), value.clone()</code>；<code>prepare_data</code> 在 <code>mod.rs</code> 里是私有 <code>mod</code>，同级模块用 <code>super::prepare_data</code> 就能访问。playground 里一共 5 个：401、带 token 列表 200、400、409、删除 204 后再 GET 得 404。</p>
+<pre><code>cargo test --test mod requests::categories</code></pre>
+<pre class="output"><code>test requests::categories::list_without_token_is_401 ... ok
+test requests::categories::create_rejects_duplicate_name_with_409 ... ok
+test requests::categories::list_with_token_is_200 ... ok
+test requests::categories::create_rejects_empty_name_with_field_errors ... ok
+test requests::categories::remove_with_token_deletes ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 31 filtered out; finished in 3.63s</code></pre>
+<p>全部测试：<code>cargo test</code> → <code>36 passed</code>；<code>cargo fmt --check</code> 无输出。</p>
+
+<div class="note"><strong>DDD 视角：认证在边界，授权在领域。</strong>“你是谁”（验 token）是 HTTP 边界的事，交给提取器，handler 和 model 都不用管 token 长什么样。“你能做什么”（比如“只有管理员能删分类”）是业务规则，应该写成 model 里一个以用户为参数的方法，由 handler 调用，跟第 6 课的 <code>ensure_name_unique</code> 放在同一层。现在 users 表里没有角色字段，所以这条规则还没法写。</div>
+
+<div class="note"><strong>文档和 1.2.0 实际不一致处</strong>
+<ul>
+<li><a href="https://loco.rs/docs/tutorials/saas-with-auth/">Build a Small Authenticated App</a> 说开发环境没有 SMTP 时注册会 <strong>500</strong>，要加 <code>stub: true</code>。实测（<code>--bg async</code>，即 <code>BackgroundAsync</code>）注册 <strong>200</strong>，邮件在后台 worker 里失败，只在日志里出现 ERROR。</li>
+<li>同一页说注册成功返回 <code>{}</code>；实测响应体是 <code>null</code>（<code>format::json(())</code>）。</li>
+<li>同一页 §7 保护自己资源的示例还是旧 scaffold 的写法（<code>add</code> handler、<code>Json&lt;Params&gt;</code>、<code>params.update</code>）。1.2.0 的 scaffold 默认就带 <code>_auth: auth::JWT</code>，handler 叫 <code>create</code> 等，参数是 DTO（第 5 课）。</li>
+<li>项目自带的 <code>tests\requests\prepare_data.rs</code> 里，<code>init_user_login</code> 用 <code>POST /api/auth/verify</code> + JSON 去验证邮箱。这个路由不存在（真正的是 <code>GET /api/auth/verify/{token}</code>），所以测试用户其实一直没验证。测试还能过，是因为登录不要求验证。<code>auth.rs</code> 里 “if the user not verified his email, he can't login” 这句注释也和代码对不上。</li>
+<li><a href="https://loco.rs/docs/how-to/jwt-auth/">JWT auth</a> 页写的 <code>"&lt;%= get_env(name='JWT_SECRET') %&gt;"</code>（单引号、外面加双引号），生成的 production.yaml 是不加引号、双引号参数。两种写法 Tera 都认。</li>
+</ul></div>
+
+<h2>3. 回忆题</h2>
+<div class="quiz" id="q1">
+<p class="q">用户登录拿到 token 后被管理员从数据库删了。他再用这个 token 请求 <code>GET /api/categories</code>（handler 只有 <code>_auth: auth::JWT</code>），会得到什么？</p>
+<button data-ok="1">200，照常返回列表</button>
+<button data-ok="0">401，用户已经删了</button>
+<button data-ok="0">404，找不到这个人</button>
+<p class="fb" aria-live="polite"></p>
+</div>
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  var fb = quiz.querySelector('.fb');
+  quiz.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      quiz.querySelectorAll('button').forEach(function (x) { x.classList.remove('right', 'wrong'); });
+      if (b.dataset.ok === '1') {
+        b.classList.add('right');
+        fb.textContent = '对。auth::JWT 只验签名和 exp，不查数据库，所以 token 过期前一直有效。要“用户不在就 401”，换成 JWTWithUser<users::Model>。';
+      } else {
+        b.classList.add('wrong');
+        fb.textContent = '不对。auth::JWT 不查库：签名对、没过期就放行。401 是 JWTWithUser 查不到用户时的行为；404 是 handler 自己调 find_by_pid 查不到时的行为。回看第 ⑤ 步的提示框。';
+      }
+    });
+  });
+});
+</script>
+
+<h2>4. 练习</h2>
+<div class="task">
+<ol>
+<li>在你的 <code>admin_api</code> 里走一遍 ①–③：贴回注册的结果、服务端日志里和邮件有关的那行、登录返回的 <code>is_verified</code>，以及 <code>/api/auth/current</code> 的输出。token 只贴前 20 个字符。</li>
+<li>做 ⑤：给 categories 的五个 handler 加上 auth，贴不带 token 和带 token 请求列表的状态码。</li>
+<li>做 ⑦：先不改测试直接 <code>cargo test</code>，贴失败那两行的 <code>left</code>/<code>right</code>；再改成带 token，贴通过结果。</li>
+<li>进阶：把 <code>get_one</code> 的 <code>_auth: auth::JWT</code> 换成 <code>auth: auth::JWTWithUser&lt;users::Model&gt;</code>，在 handler 里 <code>tracing::info!</code> 打出 <code>auth.user.email</code>。请求一次，贴日志那一行。</li>
+<li>选做：修好 <code>prepare_data.rs</code> 里那次错误的验证请求（改成 <code>GET /api/auth/verify/{token}</code>），再写一个测试断言登录返回的 <code>is_verified</code> 是 <code>true</code>。</li>
+<li>间隔复习（第 6 课）：带 token POST <code>{"description":"no name"}</code> 会得到什么状态码？为什么不是 422？</li>
+</ol>
+</div>
+
+<h2>主要阅读</h2>
+<p><a href="https://loco.rs/docs/tutorials/saas-with-auth/">Build a Small Authenticated App</a>（注意上面列的几处不一致），再看 <a href="https://loco.rs/docs/how-to/jwt-auth/">JWT auth</a> 里 <code>JWT</code> 和 <code>JWTWithUser</code> 的区别，和 <a href="https://loco.rs/docs/how-to/jwt-locations/">JWT locations</a> 里 Cookie/Query 的配法。</p>
+
+<p>有任何不清楚的，随时直接问我。</p>
+
+<nav class="next">
+<a href="0006-validation-json.html">← 第 6 课：输入校验和统一的 JSON 错误</a>
+<a href="../reference/cargo-loco-commands.html">命令速查</a>
+<span>第 8 课：后台任务 worker（待写） →</span>
+</nav>
+<footer>核实环境：loco 1.2.0 / loco-rs 1.2.0 / rustc 1.99.1 / PowerShell 7.6.8（Linux）· 2026-10-27</footer>
+</body>
+</html>

@@ -7,7 +7,10 @@ use crate::{
         categories::{CategoryDto, CreateCategory, UpdateCategory},
         common::{ApiError, Page},
     },
-    models::_entities::categories::{ActiveModel, Entity},
+    models::{
+        _entities::categories::{ActiveModel, Entity},
+        users,
+    },
 };
 
 /// Build a 404 response shaped as the [`ApiError`] envelope.
@@ -28,6 +31,7 @@ pub struct ListFilter {
 
 #[debug_handler]
 async fn list(
+    _auth: auth::JWT,
     State(ctx): State<AppContext>,
     Query(pagination): Query<query::PaginationQuery>,
     Query(filter): Query<ListFilter>,
@@ -44,7 +48,11 @@ async fn list(
 }
 
 #[debug_handler]
-async fn get_one(State(ctx): State<AppContext>, Path(id): Path<i64>) -> Result<Response> {
+async fn get_one(
+    _auth: auth::JWT,
+    State(ctx): State<AppContext>,
+    Path(id): Path<i64>,
+) -> Result<Response> {
     let Some(model) = Entity::find_by_id(id).one(&ctx.db).await? else {
         return Ok(not_found("category not found"));
     };
@@ -53,6 +61,7 @@ async fn get_one(State(ctx): State<AppContext>, Path(id): Path<i64>) -> Result<R
 
 #[debug_handler]
 async fn create(
+    _auth: auth::JWT,
     State(ctx): State<AppContext>,
     JsonValidateWithMessage(params): JsonValidateWithMessage<CreateCategory>,
 ) -> Result<Response> {
@@ -69,6 +78,7 @@ async fn create(
 
 #[debug_handler]
 async fn update(
+    _auth: auth::JWT,
     State(ctx): State<AppContext>,
     Path(id): Path<i64>,
     JsonValidateWithMessage(params): JsonValidateWithMessage<UpdateCategory>,
@@ -87,10 +97,17 @@ async fn update(
 }
 
 #[debug_handler]
-async fn remove(State(ctx): State<AppContext>, Path(id): Path<i64>) -> Result<Response> {
+async fn remove(
+    auth: auth::JWT,
+    State(ctx): State<AppContext>,
+    Path(id): Path<i64>,
+) -> Result<Response> {
+    // token 里只有 pid；要知道“是谁”，用 pid 查 users 表
+    let user = users::Model::find_by_pid(&ctx.db, &auth.claims.pid).await?;
     let Some(model) = Entity::find_by_id(id).one(&ctx.db).await? else {
         return Ok(not_found("category not found"));
     };
+    tracing::info!(category_id = id, by = %user.email, "category deleted");
 
     model.into_active_model().delete(&ctx.db).await?;
 
